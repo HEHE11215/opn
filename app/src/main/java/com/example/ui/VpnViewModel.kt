@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.PublicNodeRepository
 import com.example.model.AuditLogEntry
 import com.example.model.NodeSortOption
+import com.example.model.RelayTunnelType
 import com.example.model.TunnelConnectionStatus
 import com.example.model.TunnelTelemetry
 import com.example.model.VpnNode
@@ -17,6 +18,8 @@ import com.example.model.VpnProtocol
 import com.example.model.VpnRegion
 import com.example.vpn.AetherVpnService
 import com.example.vpn.AetherVpnStateBus
+import com.example.vpn.LocalTunnelGateway
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -24,6 +27,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 
 /**
@@ -71,7 +75,7 @@ private data class FilterBarState(
 )
 
 /**
- * Clean MVVM ViewModel orchestrating public node discovery, live TCP latency testing,
+ * Clean MVVM ViewModel orchestrating public node discovery, live HTTPS port-443 verification,
  * DataStore preferences, and Android [AetherVpnService] lifecycle intents.
  */
 class VpnViewModel(application: Application) : AndroidViewModel(application) {
@@ -89,6 +93,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         AetherVpnStateBus.auditLogs
     ) { nodes, filter, prefs, telemetry, logs ->
         val selected = nodes.firstOrNull { it.id == prefs.selectedNodeId }
+            ?: nodes.firstOrNull { it.isVerifiedWorking }
             ?: nodes.first()
 
         val query = filter.searchQuery.trim().lowercase(Locale.US)
@@ -107,9 +112,15 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             matchesRegion && matchesQuery
         }.let { matched ->
             when (filter.sortOption) {
-                NodeSortOption.LOWEST_PING -> matched.sortedBy { it.pingMs }
-                NodeSortOption.HIGHEST_SPEED -> matched.sortedByDescending { it.downloadSpeedMbps }
-                NodeSortOption.UPTIME -> matched.sortedByDescending { it.uptimeHours }
+                NodeSortOption.LOWEST_PING -> matched.sortedWith(
+                    compareByDescending<VpnNode> { it.isVerifiedWorking }.thenBy { it.pingMs }
+                )
+                NodeSortOption.HIGHEST_SPEED -> matched.sortedWith(
+                    compareByDescending<VpnNode> { it.isVerifiedWorking }.thenByDescending { it.downloadSpeedMbps }
+                )
+                NodeSortOption.UPTIME -> matched.sortedWith(
+                    compareByDescending<VpnNode> { it.isVerifiedWorking }.thenByDescending { it.uptimeHours }
+                )
             }
         }
 
@@ -142,7 +153,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     init {
-        // Proactively sync live worldwide public VPN Gate nodes in the background on startup
+        AetherVpnStateBus.updateNodePool(repository.getVerifiedCommunityNodes())
         syncLivePublicNodes(silent = true)
     }
 
@@ -181,7 +192,6 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 tag = "NODE",
                 message = "Selected relay node: ${node.flagEmoji} ${node.cityName}, ${node.countryName} (${node.ipAddress}:${node.port})"
             )
-            // If tunnel is currently active, seamlessly switch to the newly selected node
             val currentStatus = uiState.value.telemetry.status
             if (currentStatus == TunnelConnectionStatus.CONNECTED ||
                 currentStatus == TunnelConnectionStatus.CONNECTING
@@ -244,18 +254,27 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             _filterState.update { it.copy(isSyncingApi = true) }
             val result = repository.fetchLivePublicNodes()
             result.onSuccess { mergedNodes ->
-                // Preserve any custom user-added nodes
                 val customNodes = _nodes.value.filter { it.isCustomNode }
-                val combined = (customNodes + mergedNodes).distinctBy { it.ipAddress }
+                val combined = (customNodes + mergedNodes).distinctBy { "${it.ipAddress}:${it.port}" }
                 _nodes.value = combined
-                val liveCount = combined.count { it.isLiveFromPublicApi }
+                AetherVpnStateBus.updateNodePool(combined)
+
+                // Automatically select the fastest verified live node if currently disconnected
+                val bestVerified = combined.firstOrNull { it.isVerifiedWorking }
+                if (bestVerified != null &&
+                    uiState.value.telemetry.status == TunnelConnectionStatus.DISCONNECTED
+                ) {
+                    repository.setSelectedNode(bestVerified.id)
+                }
+
+                val verifiedCount = combined.count { it.isVerifiedWorking }
                 if (!silent) {
                     _filterState.update {
                         it.copy(
-                            bannerFeedback = if (liveCount > 0) {
-                                "Synced $liveCount live VPN Gate nodes + ${combined.size - liveCount} verified global nodes"
+                            bannerFeedback = if (verifiedCount > 0) {
+                                "Verified $verifiedCount live HTTPS-443 nodes ready (${combined.size} total)"
                             } else {
-                                "Verified ${combined.size} worldwide open-source community relay nodes"
+                                "Synced ${combined.size} worldwide public relay nodes"
                             }
                         )
                     }
@@ -264,7 +283,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 if (!silent) {
                     _filterState.update {
                         it.copy(
-                            bannerFeedback = "Using ${uiState.value.allNodes.size} verified built-in worldwide relay nodes"
+                            bannerFeedback = "Using ${uiState.value.allNodes.size} verified worldwide relay nodes"
                         )
                     }
                 }
@@ -279,12 +298,12 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             _filterState.update { it.copy(isPingingNodes = true) }
             val updated = repository.pingAllNodesConcurrently(_nodes.value)
             _nodes.value = updated
-            val fastest = updated.minByOrNull { it.pingMs }
+            val fastest = updated.firstOrNull { it.isVerifiedWorking } ?: updated.minByOrNull { it.pingMs }
             _filterState.update {
                 it.copy(
                     isPingingNodes = false,
                     bannerFeedback = fastest?.let { f ->
-                        "Latency sweep complete • Best: ${f.flagEmoji} ${f.cityName} (${f.pingMs} ms)"
+                        "Verified Best Relay: ${f.flagEmoji} ${f.cityName} (${f.pingMs} ms)"
                     }
                 )
             }
@@ -294,27 +313,76 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     fun pingSingleNode(node: VpnNode) {
         viewModelScope.launch {
             _filterState.update { it.copy(singlePingingNodeId = node.id) }
-            val newPing = repository.measureNodeLatencyMs(node)
+            val verified = withContext(Dispatchers.IO) {
+                LocalTunnelGateway.verifyNodeHttpsTunnel(node, timeoutMs = 2400)
+            }
+            val newPing = verified?.second ?: repository.measureNodeLatencyMs(node)
+            val isVerified = verified != null
+
             _nodes.update { list ->
                 list.map { existing ->
-                    if (existing.id == node.id) existing.copy(pingMs = newPing) else existing
+                    if (existing.id == node.id) {
+                        existing.copy(
+                            pingMs = newPing,
+                            relayType = verified?.first ?: existing.relayType,
+                            isVerifiedWorking = isVerified || existing.isVerifiedWorking
+                        )
+                    } else {
+                        existing
+                    }
                 }
             }
             AetherVpnStateBus.appendLog(
                 tag = "PING",
-                message = "Measured RTT to ${node.flagEmoji} ${node.cityName} (${node.ipAddress}:${node.port}) -> $newPing ms"
+                message = "Probed ${node.flagEmoji} ${node.cityName} (${node.ipAddress}:${node.port}) -> $newPing ms (HTTPS-443=${if (isVerified) "OK" else "TCP"})"
             )
             _filterState.update {
                 it.copy(
                     singlePingingNodeId = null,
-                    bannerFeedback = "${node.flagEmoji} ${node.cityName} latency: $newPing ms"
+                    bannerFeedback = "${node.flagEmoji} ${node.cityName}: $newPing ms"
                 )
             }
         }
     }
 
+    /**
+     * Verifies the current public Exit IP through the active LocalTunnelGateway and shows a live confirmation banner.
+     */
+    fun verifyCurrentExitIp() {
+        viewModelScope.launch {
+            val telemetry = uiState.value.telemetry
+            val activeNode = telemetry.activeNode ?: uiState.value.selectedNode
+            val port = telemetry.localGatewayPort
+            if (telemetry.status == TunnelConnectionStatus.CONNECTED && port > 0) {
+                _filterState.update { it.copy(bannerFeedback = "Verifying public Exit IP through tunnel…") }
+                val check = withContext(Dispatchers.IO) {
+                    LocalTunnelGateway.fetchExitIpThroughLocalGateway(port, activeNode)
+                }
+                AetherVpnStateBus.updateTelemetry {
+                    it.copy(
+                        verifiedExitIp = check.publicIp,
+                        verifiedExitCountry = check.countryName,
+                        verifiedExitCity = check.cityName,
+                        verifiedExitIsp = check.ispName
+                    )
+                }
+                _filterState.update {
+                    it.copy(
+                        bannerFeedback = "Exit IP Verified: ${check.publicIp} (${check.cityName}, ${check.countryName})"
+                    )
+                }
+            } else {
+                _filterState.update {
+                    it.copy(bannerFeedback = "Tap Connect first to activate the encrypted exit IP tunnel")
+                }
+            }
+        }
+    }
+
     fun selectFastestNodeAndGet(): VpnNode {
-        val fastest = _nodes.value.minByOrNull { it.pingMs } ?: uiState.value.selectedNode
+        val fastest = _nodes.value.filter { it.isVerifiedWorking }.minByOrNull { it.pingMs }
+            ?: _nodes.value.minByOrNull { it.pingMs }
+            ?: uiState.value.selectedNode
         viewModelScope.launch {
             repository.setSelectedNode(fastest.id)
         }
@@ -349,11 +417,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             uptimeHours = 24,
             operatorName = operatorName.trim().ifEmpty { "User Contributed Node" },
             protocol = protocol,
-            openVpnConfigPreview = PublicNodeRepository.defaultOpenVpnPreview(cleanIp, port, protocol),
+            relayType = RelayTunnelType.SOCKS5,
+            openVpnConfigPreview = PublicNodeRepository.defaultOpenVpnPreview(cleanIp, port, RelayTunnelType.SOCKS5),
             isCustomNode = true
         )
 
         _nodes.update { listOf(customNode) + it }
+        AetherVpnStateBus.updateNodePool(_nodes.value)
         viewModelScope.launch {
             repository.setSelectedNode(customNode.id)
             val measured = repository.measureNodeLatencyMs(customNode)
@@ -378,10 +448,6 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         AetherVpnStateBus.clearLogs()
     }
 
-    /**
-     * Dispatches an intent to [AetherVpnService] to start the encrypted TUN session.
-     * Uses `startForegroundService` on Android 8.0+ (API 26+) and `startService` on API 24–25.
-     */
     fun startVpnServiceWithNode(context: Context, node: VpnNode = uiState.value.selectedNode) {
         val prefs = uiState.value.preferences
         val intent = Intent(context, AetherVpnService::class.java).apply {
@@ -397,6 +463,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             putExtra(AetherVpnService.EXTRA_NODE_PING, node.pingMs)
             putExtra(AetherVpnService.EXTRA_NODE_OPERATOR, node.operatorName)
             putExtra(AetherVpnService.EXTRA_NODE_PROTOCOL, node.protocol.name)
+            putExtra(AetherVpnService.EXTRA_NODE_RELAY_TYPE, node.relayType.name)
+            putExtra(AetherVpnService.EXTRA_NODE_VERIFIED, node.isVerifiedWorking)
             putExtra(AetherVpnService.EXTRA_DNS_SERVER, prefs.dnsServer)
             putExtra(AetherVpnService.EXTRA_SAFE_SPLIT_TUNNEL, prefs.safeSplitTunnelMode)
         }

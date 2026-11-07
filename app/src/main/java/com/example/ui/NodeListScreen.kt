@@ -440,15 +440,30 @@ private fun WorldwideNodeItemCard(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        if (node.isLiveFromPublicApi) {
+                        if (node.isVerifiedWorking) {
                             Surface(
                                 shape = RoundedCornerShape(6.dp),
-                                color = EmeraldConnected.copy(alpha = 0.14f)
+                                color = EmeraldConnected.copy(alpha = 0.16f)
+                            ) {
+                                Text(
+                                    text = "VERIFIED 443",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    color = EmeraldConnected,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                )
+                            }
+                        } else if (node.isLiveFromPublicApi) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = SkyBluePrimary.copy(alpha = 0.14f)
                             ) {
                                 Text(
                                     text = "LIVE",
                                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                                    color = EmeraldConnected,
+                                    color = SkyBluePrimary,
                                     modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
                                 )
                             }

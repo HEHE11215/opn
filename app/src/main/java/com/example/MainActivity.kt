@@ -309,6 +309,9 @@ fun AetherNodeApp(
                         },
                         onInspectConfig = { node ->
                             viewModel.inspectNodeConfig(node)
+                        },
+                        onVerifyExitIp = {
+                            viewModel.verifyCurrentExitIp()
                         }
                     )
                 }

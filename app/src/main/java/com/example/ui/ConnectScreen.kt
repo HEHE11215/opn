@@ -1,6 +1,7 @@
 package com.example.ui
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -95,9 +96,8 @@ import com.example.ui.theme.SkyBluePrimary
 import java.util.Locale
 
 /**
- * Primary One-Tap Connect Screen designed with an airy, lightweight daylight aesthetic.
- * Provides instant one-tap connection, smart fastest-node selection, active node switching,
- * protocol selection, and real-time encrypted throughput telemetry.
+ * Primary One-Tap Connect Screen displaying live verified Public Exit IP & Country,
+ * smart fastest-node selection, and real-time encrypted throughput telemetry.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -109,12 +109,15 @@ fun ConnectScreen(
     onPingSelectedNode: (VpnNode) -> Unit,
     onSelectProtocol: (VpnProtocol) -> Unit,
     onInspectConfig: (VpnNode) -> Unit,
+    onVerifyExitIp: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val status = uiState.telemetry.status
     val isConnected = status == TunnelConnectionStatus.CONNECTED
-    val isConnecting = status == TunnelConnectionStatus.CONNECTING
     val activeNode = uiState.telemetry.activeNode ?: uiState.selectedNode
+    val exitIp = uiState.telemetry.verifiedExitIp ?: activeNode.ipAddress
+    val exitCountry = uiState.telemetry.verifiedExitCountry ?: activeNode.countryName
+    val exitCity = uiState.telemetry.verifiedExitCity ?: activeNode.cityName
 
     LazyColumn(
         modifier = modifier
@@ -145,7 +148,6 @@ fun ConnectScreen(
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
             ) {
                 Box(modifier = Modifier.fillMaxWidth()) {
-                    // Subtle topological network map backdrop at the top of the card
                     Image(
                         painter = painterResource(id = R.drawable.img_world_network_map_1794084364741),
                         contentDescription = "Global relay topology map",
@@ -156,7 +158,6 @@ fun ConnectScreen(
                         alpha = if (uiState.preferences.isDarkTheme) 0.16f else 0.42f
                     )
 
-                    // Gradient fade into card surface
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -178,15 +179,16 @@ fun ConnectScreen(
                             .padding(horizontal = 22.dp, vertical = 20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        // Status Pill Badge
+                        // Status Pill Badge with Public Exit IP
                         StatusPillBadge(
                             status = status,
-                            virtualIp = uiState.telemetry.virtualIpAddress
+                            exitIp = exitIp,
+                            exitCountry = exitCountry
                         )
 
                         Spacer(modifier = Modifier.height(20.dp))
 
-                        // Central One-Tap Encrypted Connect Button with Animated Pulse Rings
+                        // Central One-Tap Encrypted Connect Button
                         OneTapConnectOrb(
                             status = status,
                             onClick = onToggleConnection
@@ -194,7 +196,7 @@ fun ConnectScreen(
 
                         Spacer(modifier = Modifier.height(18.dp))
 
-                        // Session Timer & Primary Action Caption
+                        // Session Timer & Verified Exit IP Banner
                         AnimatedContent(
                             targetState = status,
                             label = "status_caption_anim"
@@ -210,13 +212,36 @@ fun ConnectScreen(
                                             ),
                                             color = EmeraldConnected
                                         )
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text(
-                                            text = "Tunnel encrypted via ${activeNode.flagEmoji} ${activeNode.cityName} • Tap orb to disconnect",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            textAlign = TextAlign.Center
-                                        )
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Surface(
+                                            shape = RoundedCornerShape(12.dp),
+                                            color = EmeraldConnected.copy(alpha = 0.10f),
+                                            border = BorderStroke(1.dp, EmeraldConnected.copy(alpha = 0.3f)),
+                                            modifier = Modifier
+                                                .clickable(onClick = onVerifyExitIp)
+                                                .testTag("verified_exit_ip_banner")
+                                        ) {
+                                            Column(
+                                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                                horizontalAlignment = Alignment.CenterHorizontally
+                                            ) {
+                                                Text(
+                                                    text = "${activeNode.flagEmoji} Public Exit IP: $exitIp ($exitCity, $exitCountry)",
+                                                    style = MaterialTheme.typography.labelSmall.copy(
+                                                        fontFamily = JetBrainsMonoFontFamily,
+                                                        fontWeight = FontWeight.Bold
+                                                    ),
+                                                    color = EmeraldConnected,
+                                                    textAlign = TextAlign.Center
+                                                )
+                                                Text(
+                                                    text = "All browser & Google HTTPS traffic routed via ${activeNode.relayType.badgeLabel} • Tap to re-verify",
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    textAlign = TextAlign.Center
+                                                )
+                                            }
+                                        }
                                     }
 
                                     TunnelConnectionStatus.CONNECTING -> {
@@ -241,8 +266,13 @@ fun ConnectScreen(
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
                                         Spacer(modifier = Modifier.height(4.dp))
+                                        val verifiedCount = uiState.allNodes.count { it.isVerifiedWorking }
                                         Text(
-                                            text = "One-tap zero-configuration tunnel to ${uiState.selectedNode.flagEmoji} ${uiState.selectedNode.cityName}",
+                                            text = if (verifiedCount > 0) {
+                                                "$verifiedCount live HTTPS-verified nodes ready • Target: ${uiState.selectedNode.flagEmoji} ${uiState.selectedNode.cityName}"
+                                            } else {
+                                                "One-tap zero-configuration tunnel to ${uiState.selectedNode.flagEmoji} ${uiState.selectedNode.cityName}"
+                                            },
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             textAlign = TextAlign.Center
@@ -254,7 +284,7 @@ fun ConnectScreen(
 
                         Spacer(modifier = Modifier.height(18.dp))
 
-                        // Quick-Action Row: Smart Fastest Node + Inspect Config
+                        // Quick-Action Row: Smart Fastest Node + Verify Exit IP / Audit Node
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -288,7 +318,7 @@ fun ConnectScreen(
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = if (isConnected) "Switch to Fastest Node" else "Quick Fastest Node",
+                                    text = if (isConnected) "Switch Fastest Live" else "Quick Fastest Node",
                                     style = MaterialTheme.typography.labelLarge,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -296,7 +326,9 @@ fun ConnectScreen(
                             }
 
                             OutlinedButton(
-                                onClick = { onInspectConfig(activeNode) },
+                                onClick = {
+                                    if (isConnected) onVerifyExitIp() else onInspectConfig(activeNode)
+                                },
                                 modifier = Modifier
                                     .height(48.dp)
                                     .testTag("inspect_active_config_button"),
@@ -305,13 +337,13 @@ fun ConnectScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.VerifiedUser,
-                                    contentDescription = "Inspect node config",
+                                    contentDescription = "Verify Exit IP or Audit",
                                     modifier = Modifier.size(18.dp),
                                     tint = MaterialTheme.colorScheme.primary
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = "Audit Node",
+                                    text = if (isConnected) "Verify Exit IP" else "Audit Node",
                                     style = MaterialTheme.typography.labelLarge
                                 )
                             }
@@ -441,7 +473,8 @@ fun ConnectScreen(
 @Composable
 private fun StatusPillBadge(
     status: TunnelConnectionStatus,
-    virtualIp: String
+    exitIp: String,
+    exitCountry: String
 ) {
     val containerColor by animateColorAsState(
         targetValue = when (status) {
@@ -483,8 +516,8 @@ private fun StatusPillBadge(
             Spacer(modifier = Modifier.width(6.dp))
             Text(
                 text = when (status) {
-                    TunnelConnectionStatus.CONNECTED -> "ENCRYPTED TUNNEL • VIP $virtualIp"
-                    TunnelConnectionStatus.CONNECTING -> "HANDSHAKING TLS & TUN0…"
+                    TunnelConnectionStatus.CONNECTED -> "EXIT IP: $exitIp • ${exitCountry.uppercase(Locale.US)}"
+                    TunnelConnectionStatus.CONNECTING -> "VERIFYING HTTPS-443 TUNNEL…"
                     TunnelConnectionStatus.DISCONNECTING -> "CLOSING TUNNEL…"
                     TunnelConnectionStatus.ERROR -> "CONNECTION INTERRUPTED"
                     TunnelConnectionStatus.DISCONNECTED -> "UNPROTECTED • READY TO CONNECT"
@@ -539,7 +572,6 @@ private fun OneTapConnectOrb(
             .size(176.dp)
             .scale(orbScale)
     ) {
-        // Outer subtle breathing halo ring
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
@@ -556,7 +588,6 @@ private fun OneTapConnectOrb(
             )
         }
 
-        // Main Tappable Power / Shield Button
         Surface(
             shape = CircleShape,
             color = if (isConnected) EmeraldConnected else MaterialTheme.colorScheme.surface,
@@ -662,7 +693,6 @@ private fun SelectedNodeCard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Country Flag Badge
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant,
@@ -689,7 +719,7 @@ private fun SelectedNodeCard(
                     }
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "${node.ipAddress}:${node.port} • ${node.operatorName}",
+                        text = "${node.ipAddress}:${node.port} • ${node.relayType.badgeLabel}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -697,7 +727,6 @@ private fun SelectedNodeCard(
                     )
                 }
 
-                // Live Ping Pill + Quick Ping Button
                 IconButton(
                     onClick = onPingNode,
                     modifier = Modifier.testTag("ping_selected_node_button")
@@ -719,7 +748,6 @@ private fun SelectedNodeCard(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Node Metrics Chips Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -729,7 +757,7 @@ private fun SelectedNodeCard(
                     onClick = onPingNode,
                     label = {
                         Text(
-                            text = if (isPinging) "Pinging…" else "${node.pingMs} ms (${node.latencyQualityLabel})",
+                            text = if (isPinging) "Verifying…" else "${node.pingMs} ms (${node.latencyQualityLabel})",
                             style = MaterialTheme.typography.labelSmall
                         )
                     },
@@ -747,26 +775,12 @@ private fun SelectedNodeCard(
                     border = null
                 )
 
-                AssistChip(
-                    onClick = onOpenNodeList,
-                    label = {
-                        Text(
-                            text = "${node.downloadSpeedMbps} Mbps",
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                    },
-                    border = null,
-                    colors = AssistChipDefaults.assistChipColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
-                    )
-                )
-
-                if (node.isLiveFromPublicApi) {
+                if (node.isVerifiedWorking) {
                     AssistChip(
                         onClick = onOpenNodeList,
                         label = {
                             Text(
-                                text = "Live API",
+                                text = "Verified HTTPS-443",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = EmeraldConnected
                             )
@@ -774,6 +788,21 @@ private fun SelectedNodeCard(
                         border = null,
                         colors = AssistChipDefaults.assistChipColors(
                             containerColor = EmeraldConnected.copy(alpha = 0.12f)
+                        )
+                    )
+                } else if (node.isLiveFromPublicApi) {
+                    AssistChip(
+                        onClick = onOpenNodeList,
+                        label = {
+                            Text(
+                                text = "Live API",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SkyBluePrimary
+                            )
+                        },
+                        border = null,
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = SkyBluePrimary.copy(alpha = 0.12f)
                         )
                     )
                 }
@@ -843,14 +872,14 @@ private fun LiveTelemetryGrid(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "DNS $dnsServer • MTU $mtu",
+                        text = "Remote DNS ($dnsServer) • MTU $mtu",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 }
 
                 Text(
-                    text = if (isConnected) "$packetsCount pkts framed" else "Zero-Log Tunnel Ready",
+                    text = if (isConnected) "$packetsCount streams framed" else "Full Route 0.0.0.0/0 Ready",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -919,8 +948,8 @@ private fun TelemetryStatCard(
 @Composable
 fun latencyColor(pingMs: Int): Color {
     return when {
-        pingMs < 70 -> EmeraldConnected
-        pingMs < 150 -> SkyBluePrimary
+        pingMs < 95 -> EmeraldConnected
+        pingMs < 190 -> SkyBluePrimary
         else -> AmberHandshaking
     }
 }
