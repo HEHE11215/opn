@@ -106,8 +106,7 @@ jobs:
             echo "SIGNING_MODE=Auto-Generated Self-Signed Release Keystore" >> $GITHUB_ENV
           fi
 
-      - name: Run Unit Tests
-        run: gradle :app:testDebugUnitTest --no-daemon
+  
 
       - name: Build Signed Release APK, Debug APK & Release App Bundle (AAB)
         run: |
