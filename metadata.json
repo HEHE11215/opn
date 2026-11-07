@@ -1,0 +1,6 @@
+{
+  "name": "AetherNode",
+  "description": "Lightweight, open-source worldwide VPN client powered by public community relay nodes with one-tap encrypted connectivity and real-time latency measurement.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
