@@ -83,10 +83,14 @@ jobs:
         with: { fetch-depth: 0 }
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: "21" }
-      - uses: android-actions/setup-android@v3
+      - name: Accept Android SDK Licenses
+        run: |
+          SDKMANAGER=${'$'}(find "${'$'}ANDROID_HOME/cmdline-tools" -name sdkmanager | sort -V | tail -n 1)
+          yes | "${'$'}SDKMANAGER" --licenses > /dev/null || true
+          [ -f .env ] || cp .env.example .env
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: "9.3.1" }
-      - run: gradle :app:assembleRelease :app:assembleDebug :app:bundleRelease
+      - run: gradle :app:assembleRelease :app:assembleDebug :app:bundleRelease --no-daemon
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${'$'}{{ github.run_number }}

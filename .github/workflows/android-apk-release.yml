@@ -35,21 +35,42 @@ jobs:
           distribution: "temurin"
           java-version: "21"
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Configure Android SDK & Accept Licenses
+        run: |
+          # ubuntu-latest runners include Android SDK at $ANDROID_HOME (/usr/local/lib/android/sdk).
+          # Accept all Android SDK licenses directly so Gradle can auto-install compileSdk 36.1
+          # without triggering the deprecated 'tools' package bug in setup-android.
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
+
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager 2>/dev/null | sort -V | tail -n 1)
+          if [ -n "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --licenses > /dev/null || true
+          else
+            mkdir -p "$ANDROID_HOME/licenses"
+            printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee" > "$ANDROID_HOME/licenses/android-sdk-license"
+            printf "\n84831b9409646a918e30573bab4c9c91346d8abd" > "$ANDROID_HOME/licenses/android-sdk-preview-license"
+          fi
 
       - name: Setup Gradle 9.3.1
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "9.3.1"
 
-      - name: Prepare Debug & Release Signing Keystores
+      - name: Prepare Environment (.env) & Signing Keystores
         env:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          # 1. Ensure debug.keystore exists for debug builds
+          # 1. Ensure .env file exists for Secrets Gradle Plugin
+          if [ ! -f ".env" ]; then
+            cp .env.example .env
+          fi
+
+          # 2. Ensure debug.keystore exists for debug builds
           if [ ! -f "debug.keystore" ]; then
             keytool -genkeypair -v \
               -keystore debug.keystore \
@@ -62,7 +83,7 @@ jobs:
               -dname "CN=Android Debug,O=Android,C=US"
           fi
 
-          # 2. Configure release keystore (from GitHub Secrets if provided, or auto-generate self-signed release key)
+          # 3. Configure release keystore (from GitHub Secrets if provided, or auto-generate self-signed release key)
           if [ -n "$RELEASE_KEYSTORE_BASE64" ]; then
             echo "$RELEASE_KEYSTORE_BASE64" | base64 --decode > my-upload-key.jks
             echo "KEYSTORE_PATH=${GITHUB_WORKSPACE}/my-upload-key.jks" >> $GITHUB_ENV
@@ -86,11 +107,11 @@ jobs:
           fi
 
       - name: Run Unit Tests
-        run: gradle :app:testDebugUnitTest
+        run: gradle :app:testDebugUnitTest --no-daemon
 
       - name: Build Signed Release APK, Debug APK & Release App Bundle (AAB)
         run: |
-          gradle :app:assembleRelease :app:assembleDebug :app:bundleRelease
+          gradle :app:assembleRelease :app:assembleDebug :app:bundleRelease --no-daemon
 
       - name: Package Artifacts, Compute Checksums & Generate Full Release Notes
         id: meta
