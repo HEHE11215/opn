@@ -645,7 +645,7 @@ class PublicNodeRepository(private val context: Context) {
 
         private fun countryCodeToName(code: String): String {
             return try {
-                Locale("", code).getDisplayCountry(Locale.ENGLISH).ifEmpty { code }
+                Locale.Builder().setRegion(code).build().getDisplayCountry(Locale.ENGLISH).ifEmpty { code }
             } catch (_: Exception) {
                 code
             }
