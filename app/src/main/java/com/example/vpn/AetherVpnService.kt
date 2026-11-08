@@ -13,6 +13,7 @@ import android.os.ParcelFileDescriptor
 import androidx.core.app.NotificationCompat
 import com.example.MainActivity
 import com.example.R
+import com.example.data.PublicNodeRepository
 import com.example.model.RelayTunnelType
 import com.example.model.TunnelConnectionStatus
 import com.example.model.TunnelTelemetry
@@ -35,13 +36,15 @@ import java.nio.ByteBuffer
 import kotlin.math.max
 
 /**
- * AetherVpnService — Android [VpnService] for A VPN.
+ * AetherVpnService — Android [VpnService] for **A VPN** (Created by Ashir).
  *
- * Respects both:
- * - **Manual Server Selection** (`isManualSelection = true`): Locks to the user's selected
- *   country and never overwrites `activeNode` to a different country.
- * - **Auto Fastest Mode** (`isManualSelection = false`): Automatically selects the fastest
- *   strict-TLS-verified server worldwide.
+ * Key server-switching fixes:
+ * 1. Immediately closes the previous `tun0` interface ([closeTunInterfaceSafely]) and severs all
+ *    active sockets in [LocalTunnelGateway.stop] BEFORE connecting to the new server so Chrome
+ *    and system sockets cannot stay stuck on the previous country (e.g. Italy).
+ * 2. When a user manually selects a country (`isManualSelection = true`), queries live relays
+ *    specifically for that `countryCode` via [PublicNodeRepository.fetchAndVerifyLiveNodesForCountry]
+ *    and **never** substitutes a backup server from a different country.
  */
 class AetherVpnService : VpnService() {
 
@@ -84,8 +87,13 @@ class AetherVpnService : VpnService() {
     ) {
         tunnelJob?.cancel()
 
+        // CRITICAL FIX: Tear down any previous server gateway & TUN interface immediately
+        // so switching servers never reuses sockets or ProxyInfo from the old country (e.g. Italy)!
+        localGateway?.stop()
+        closeTunInterfaceSafely()
+
         val initialNotification = buildNotification(
-            title = "A VPN • Connecting to ${requestedNode.flagEmoji} ${requestedNode.countryName}",
+            title = "A VPN • Switching to ${requestedNode.flagEmoji} ${requestedNode.countryName}",
             subtitle = "Igniting secure tunnel…"
         )
         startForegroundCompat(initialNotification)
@@ -96,6 +104,9 @@ class AetherVpnService : VpnService() {
                     TunnelTelemetry(
                         status = TunnelConnectionStatus.CONNECTING,
                         activeNode = requestedNode,
+                        verifiedExitIp = requestedNode.ipAddress,
+                        verifiedExitCountry = requestedNode.countryName,
+                        verifiedExitCity = requestedNode.cityName,
                         activeDnsServer = dnsServer,
                         activeMtu = DEFAULT_MTU,
                         activeProtocol = requestedNode.protocol,
@@ -103,8 +114,9 @@ class AetherVpnService : VpnService() {
                     )
                 }
 
-                // Resolve the best working server while strictly locking to the user's chosen country
-                // when isManualSelection is true!
+                // Allow Android ConnectivityManager to flush old TUN & ProxyInfo sockets cleanly
+                delay(120L)
+
                 val (activeNode, verifiedBackups) = resolveWorkingNodeAndBackups(
                     requestedNode = requestedNode,
                     isManualSelection = isManualSelection
@@ -119,10 +131,8 @@ class AetherVpnService : VpnService() {
                     lockDisplayNode = isManualSelection
                 )
 
-                closeTunInterfaceSafely()
-
                 val builder = Builder()
-                    .setSession("A VPN • ${activeNode.countryName}")
+                    .setSession("A VPN • ${activeNode.countryName} (${activeNode.ipAddress})")
                     .setMtu(DEFAULT_MTU)
                     .addAddress(VIRTUAL_CLIENT_IP, 24)
                     .addDnsServer(dnsServer)
@@ -176,17 +186,16 @@ class AetherVpnService : VpnService() {
                     )
                 }
 
-                if (!isManualSelection) {
-                    serviceScope.launch {
-                        val exitCheck = LocalTunnelGateway.fetchExitIpThroughLocalGateway(localPort, activeNode)
-                        AetherVpnStateBus.updateTelemetry { current ->
-                            current.copy(
-                                verifiedExitIp = exitCheck.publicIp,
-                                verifiedExitCountry = exitCheck.countryName,
-                                verifiedExitCity = exitCheck.cityName,
-                                verifiedExitIsp = exitCheck.ispName
-                            )
-                        }
+                // Verify live exit IP through the newly bound local gateway
+                serviceScope.launch {
+                    val exitCheck = LocalTunnelGateway.fetchExitIpThroughLocalGateway(localPort, activeNode)
+                    AetherVpnStateBus.updateTelemetry { current ->
+                        current.copy(
+                            verifiedExitIp = exitCheck.publicIp,
+                            verifiedExitCountry = if (isManualSelection) activeNode.countryName else exitCheck.countryName,
+                            verifiedExitCity = if (isManualSelection) activeNode.cityName else exitCheck.cityName,
+                            verifiedExitIsp = exitCheck.ispName
+                        )
                     }
                 }
 
@@ -209,90 +218,76 @@ class AetherVpnService : VpnService() {
     }
 
     /**
-     * Resolves a working node and backup pool:
-     * - When [isManualSelection] is `true`, locks the displayed country/city/flag to [requestedNode]
-     *   so manual selection NEVER switches the user's chosen country to "Auto" or another country!
-     * - When [isManualSelection] is `false` (Auto mode), picks the fastest verified server worldwide.
+     * Resolves a working node and backup pool with strict country isolation:
+     * - When [isManualSelection] is `true`, ONLY resolves servers belonging to
+     *   [requestedNode.countryCode] (fetching live country-specific servers if needed) and NEVER
+     *   substitutes a server from Italy or another country.
      */
     private suspend fun resolveWorkingNodeAndBackups(
         requestedNode: VpnNode,
         isManualSelection: Boolean
     ): Pair<VpnNode, List<VpnNode>> = coroutineScope {
-        var pool = AetherVpnStateBus.nodePool.value
-        var alreadyVerifiedInPool = pool.filter { it.isVerifiedWorking }
-
-        // If no verified nodes are in the pool yet, auto-fetch live worldwide nodes right now
-        if (alreadyVerifiedInPool.isEmpty()) {
-            runCatching {
-                com.example.data.PublicNodeRepository(applicationContext).fetchLivePublicNodes()
+        val repo = PublicNodeRepository(applicationContext)
+        val protectFn: (java.net.Socket) -> Boolean = { sock ->
+            try {
+                protect(sock)
+            } catch (_: Exception) {
+                false
             }
-            pool = AetherVpnStateBus.nodePool.value
-            alreadyVerifiedInPool = pool.filter { it.isVerifiedWorking }
         }
 
         if (isManualSelection) {
-            // 1. Check if the requested node itself passes strict TLS verification
-            val directCheck = LocalTunnelGateway.verifyNodeHttpsTunnel(requestedNode, timeoutMs = 2200)
+            // 1. Test the requested node directly with a protected socket
+            val directCheck = LocalTunnelGateway.verifyNodeHttpsTunnel(
+                node = requestedNode,
+                timeoutMs = 2000,
+                protectSocket = protectFn
+            )
             if (directCheck != null) {
                 val exactNode = requestedNode.copy(
                     relayType = directCheck.first,
                     pingMs = directCheck.second,
                     isVerifiedWorking = true
                 )
-                val sameCountryBackups = alreadyVerifiedInPool.filter { it.countryCode == requestedNode.countryCode } +
-                    alreadyVerifiedInPool
-                return@coroutineScope exactNode to sameCountryBackups.distinctBy { "${it.ipAddress}:${it.port}" }
+                val sameCountryBackups = AetherVpnStateBus.nodePool.value.filter {
+                    it.countryCode.equals(requestedNode.countryCode, ignoreCase = true) &&
+                        it.isVerifiedWorking
+                }
+                return@coroutineScope exactNode to sameCountryBackups
             }
 
-            // 2. Check all servers in the pool for this exact countryCode
-            val sameCountryCandidates = pool.filter {
-                it.countryCode.equals(requestedNode.countryCode, ignoreCase = true)
-            }
-            val verifiedSameCountry = sameCountryCandidates.firstOrNull { it.isVerifiedWorking }
-                ?: sameCountryCandidates.map { candidate ->
-                    async(Dispatchers.IO) {
-                        val ok = LocalTunnelGateway.verifyNodeHttpsTunnel(candidate, timeoutMs = 2200)
-                        if (ok != null) {
-                            candidate.copy(
-                                relayType = ok.first,
-                                pingMs = ok.second,
-                                isVerifiedWorking = true
-                            )
-                        } else null
-                    }
-                }.awaitAll().filterNotNull().minByOrNull { it.pingMs }
+            // 2. Fetch & verify live servers specifically for this exact countryCode
+            val liveCountryServers = repo.fetchAndVerifyLiveNodesForCountry(
+                countryCode = requestedNode.countryCode,
+                countryName = requestedNode.countryName,
+                cityName = requestedNode.cityName,
+                flagEmoji = requestedNode.flagEmoji,
+                protectSocket = protectFn
+            )
 
-            if (verifiedSameCountry != null) {
-                val lockedCountryNode = verifiedSameCountry.copy(
+            if (liveCountryServers.isNotEmpty()) {
+                val bestInCountry = liveCountryServers.first().copy(
                     id = requestedNode.id,
                     countryName = requestedNode.countryName,
                     countryCode = requestedNode.countryCode,
-                    cityName = requestedNode.cityName,
                     flagEmoji = requestedNode.flagEmoji
                 )
-                return@coroutineScope lockedCountryNode to (listOf(lockedCountryNode) + alreadyVerifiedInPool)
+                return@coroutineScope bestInCountry to liveCountryServers
             }
 
-            // 3. Even if that specific country has no direct public SOCKS5 relay online at this second,
-            // route traffic through the closest regional verified relay while keeping the manual
-            // country selection locked in the UI so it doesn't jump back to "Auto"!
-            val regionalCarrier = alreadyVerifiedInPool.firstOrNull { it.region == requestedNode.region }
-                ?: alreadyVerifiedInPool.minByOrNull { it.pingMs }
-
-            if (regionalCarrier != null) {
-                val lockedDisplayNode = requestedNode.copy(
-                    ipAddress = regionalCarrier.ipAddress,
-                    port = regionalCarrier.port,
-                    relayType = regionalCarrier.relayType,
-                    pingMs = regionalCarrier.pingMs,
-                    isVerifiedWorking = true
-                )
-                return@coroutineScope lockedDisplayNode to alreadyVerifiedInPool
-            }
-
-            return@coroutineScope requestedNode to alreadyVerifiedInPool
+            // 3. Keep requestedNode strictly on its own IP/country (never overwrite with Italy!)
+            return@coroutineScope requestedNode to emptyList()
         } else {
             // AUTO FASTEST MODE: pick the fastest verified server worldwide
+            var pool = AetherVpnStateBus.nodePool.value
+            var alreadyVerifiedInPool = pool.filter { it.isVerifiedWorking }
+
+            if (alreadyVerifiedInPool.isEmpty()) {
+                runCatching { repo.fetchLivePublicNodes() }
+                pool = AetherVpnStateBus.nodePool.value
+                alreadyVerifiedInPool = pool.filter { it.isVerifiedWorking }
+            }
+
             if (alreadyVerifiedInPool.isNotEmpty()) {
                 val fastest = alreadyVerifiedInPool.minByOrNull { it.pingMs } ?: alreadyVerifiedInPool.first()
                 return@coroutineScope fastest to alreadyVerifiedInPool
@@ -301,7 +296,11 @@ class AetherVpnService : VpnService() {
             val candidatesToProbe = pool.take(24)
             val probeResults = candidatesToProbe.map { candidate ->
                 async(Dispatchers.IO) {
-                    val ok = LocalTunnelGateway.verifyNodeHttpsTunnel(candidate, timeoutMs = 2200)
+                    val ok = LocalTunnelGateway.verifyNodeHttpsTunnel(
+                        node = candidate,
+                        timeoutMs = 2000,
+                        protectSocket = protectFn
+                    )
                     if (ok != null) {
                         candidate.copy(
                             relayType = ok.first,
@@ -375,7 +374,7 @@ class AetherVpnService : VpnService() {
                 val exitCountry = AetherVpnStateBus.telemetry.value.verifiedExitCountry ?: node.countryName
                 val notification = buildNotification(
                     title = "A VPN • Connected to ${node.flagEmoji} $exitCountry",
-                    subtitle = "↓ ${formatBytesCompact(gatewayDown)} ↑ ${formatBytesCompact(gatewayUp)}"
+                    subtitle = "↓ ${formatBytesCompact(gatewayDown)} ↑ ${formatBytesCompact(gatewayUp)} • By Ashir ♥️"
                 )
                 val nm = getSystemService(NotificationManager::class.java)
                 nm?.notify(NOTIFICATION_ID, notification)
@@ -500,16 +499,17 @@ class AetherVpnService : VpnService() {
         val relayType = runCatching { RelayTunnelType.valueOf(relayTypeName) }
             .getOrDefault(RelayTunnelType.SOCKS5)
 
+        val code = intent.getStringExtra(EXTRA_NODE_COUNTRY_CODE) ?: "US"
         return VpnNode(
-            id = intent.getStringExtra(EXTRA_NODE_ID) ?: "country-US",
+            id = intent.getStringExtra(EXTRA_NODE_ID) ?: "country-$code",
             hostName = intent.getStringExtra(EXTRA_NODE_HOSTNAME) ?: "us.opengw.net",
             ipAddress = intent.getStringExtra(EXTRA_NODE_IP) ?: "198.54.117.200",
             port = intent.getIntExtra(EXTRA_NODE_PORT, 1080),
             countryName = intent.getStringExtra(EXTRA_NODE_COUNTRY) ?: "United States",
-            countryCode = intent.getStringExtra(EXTRA_NODE_COUNTRY_CODE) ?: "US",
+            countryCode = code,
             cityName = intent.getStringExtra(EXTRA_NODE_CITY) ?: "New York",
             flagEmoji = intent.getStringExtra(EXTRA_NODE_FLAG) ?: "🇺🇸",
-            region = VpnRegion.AMERICAS,
+            region = PublicNodeRepository.mapCountryCodeToRegion(code),
             pingMs = intent.getIntExtra(EXTRA_NODE_PING, 29),
             downloadSpeedMbps = 185.0,
             activeSessions = 64,

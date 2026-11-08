@@ -1,9 +1,14 @@
 package com.example.ui.theme
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
 
 private val LightColorScheme = lightColorScheme(
@@ -48,19 +53,48 @@ private val DarkColorScheme = darkColorScheme(
     error = Color(0xFFFB7185)
 )
 
+@Composable
+private fun animateThemeColor(target: Color, label: String): Color {
+    val animated by animateColorAsState(
+        targetValue = target,
+        animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing),
+        label = label
+    )
+    return animated
+}
+
 /**
- * AetherNode Theme: Defaults to a featherweight, high-contrast Daylight palette
- * ("very light UI") while supporting an optional dark mode toggle.
+ * A VPN Liquid Glass Theme with silky-smooth animated Dark/Light mode transitions.
  */
 @Composable
 fun AetherNodeTheme(
     darkTheme: Boolean = false,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
+    val target = if (darkTheme) DarkColorScheme else LightColorScheme
+
+    val animatedScheme: ColorScheme = target.copy(
+        primary = animateThemeColor(target.primary, "primary"),
+        onPrimary = animateThemeColor(target.onPrimary, "onPrimary"),
+        primaryContainer = animateThemeColor(target.primaryContainer, "primaryContainer"),
+        onPrimaryContainer = animateThemeColor(target.onPrimaryContainer, "onPrimaryContainer"),
+        secondary = animateThemeColor(target.secondary, "secondary"),
+        onSecondary = animateThemeColor(target.onSecondary, "onSecondary"),
+        secondaryContainer = animateThemeColor(target.secondaryContainer, "secondaryContainer"),
+        onSecondaryContainer = animateThemeColor(target.onSecondaryContainer, "onSecondaryContainer"),
+        tertiary = animateThemeColor(target.tertiary, "tertiary"),
+        background = animateThemeColor(target.background, "background"),
+        onBackground = animateThemeColor(target.onBackground, "onBackground"),
+        surface = animateThemeColor(target.surface, "surface"),
+        onSurface = animateThemeColor(target.onSurface, "onSurface"),
+        surfaceVariant = animateThemeColor(target.surfaceVariant, "surfaceVariant"),
+        onSurfaceVariant = animateThemeColor(target.onSurfaceVariant, "onSurfaceVariant"),
+        outline = animateThemeColor(target.outline, "outline"),
+        error = animateThemeColor(target.error, "error")
+    )
 
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = animatedScheme,
         typography = Typography,
         content = content
     )

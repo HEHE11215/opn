@@ -38,12 +38,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.LocalFireDepartment
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Upload
+import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -64,7 +65,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -90,8 +90,8 @@ private val FireGold = Color(0xFFFFB800)
 private val FireCrimson = Color(0xFFFF2A54)
 
 /**
- * Reusable Ultra-Lightweight iPhone Glassmorphic Card ("iPhone Glass Hi Effect").
- * Uses translucent frosted layers + specular top-left highlight border.
+ * Reusable Ultra-Lightweight iPhone Glassmorphic Card ("iPhone Glass Hi Effect")
+ * with smooth Dark/Light mode animated surface interpolation.
  */
 @Composable
 fun IosGlassCard(
@@ -102,40 +102,45 @@ fun IosGlassCard(
     content: @Composable () -> Unit
 ) {
     val shape = RoundedCornerShape(cornerRadius)
-    val glassFill = if (isDark) {
-        Brush.verticalGradient(
-            colors = listOf(
-                Color(0xFF18263E).copy(alpha = 0.72f),
-                Color(0xFF0F192B).copy(alpha = 0.58f)
-            )
-        )
-    } else {
-        Brush.verticalGradient(
-            colors = listOf(
-                Color.White.copy(alpha = 0.78f),
-                Color(0xFFF2F7FF).copy(alpha = 0.62f)
-            )
-        )
-    }
+    val topColor by animateColorAsState(
+        targetValue = if (isDark) {
+            Color(0xFF18263E).copy(alpha = 0.74f)
+        } else {
+            Color.White.copy(alpha = 0.82f)
+        },
+        animationSpec = tween(500, easing = FastOutSlowInEasing),
+        label = "glass_top_color"
+    )
+    val bottomColor by animateColorAsState(
+        targetValue = if (isDark) {
+            Color(0xFF0F192B).copy(alpha = 0.62f)
+        } else {
+            Color(0xFFF2F7FF).copy(alpha = 0.68f)
+        },
+        animationSpec = tween(500, easing = FastOutSlowInEasing),
+        label = "glass_bottom_color"
+    )
+
+    val glassFill = Brush.verticalGradient(colors = listOf(topColor, bottomColor))
 
     val specularBorder = Brush.linearGradient(
         colors = if (accentGlowColor != null) {
             listOf(
-                accentGlowColor.copy(alpha = 0.75f),
-                Color.White.copy(alpha = if (isDark) 0.25f else 0.85f),
-                accentGlowColor.copy(alpha = 0.35f)
+                accentGlowColor.copy(alpha = 0.78f),
+                Color.White.copy(alpha = if (isDark) 0.28f else 0.88f),
+                accentGlowColor.copy(alpha = 0.38f)
             )
         } else if (isDark) {
             listOf(
                 Color.White.copy(alpha = 0.32f),
                 Color.White.copy(alpha = 0.08f),
-                SkyBluePrimary.copy(alpha = 0.22f)
+                SkyBluePrimary.copy(alpha = 0.24f)
             )
         } else {
             listOf(
-                Color.White.copy(alpha = 0.95f),
-                Color.White.copy(alpha = 0.45f),
-                SkyBluePrimary.copy(alpha = 0.20f)
+                Color.White.copy(alpha = 0.96f),
+                Color.White.copy(alpha = 0.48f),
+                SkyBluePrimary.copy(alpha = 0.22f)
             )
         }
     )
@@ -155,7 +160,7 @@ fun IosGlassCard(
  * - Animated Blazing Fire Orb (`FireConnectOrb`) when connecting / connected
  * - Real-Time Live Telemetry & Speed Indicator (`RealtimeLiveIndicatorPill`)
  * - Strict respect for Manual Country Selection vs Auto Fastest Mode
- * - Bottom signature: "Made with love by Ashir ♥️"
+ * - Prominent Developer Credits Card ("Made with love by Ashir ♥️")
  */
 @Composable
 fun ConnectScreen(
@@ -163,6 +168,7 @@ fun ConnectScreen(
     onToggleConnection: () -> Unit,
     onConnectSmartFastest: () -> Unit,
     onOpenNodeSelector: () -> Unit,
+    onOpenDeveloperCredits: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val status = uiState.telemetry.status
@@ -170,9 +176,11 @@ fun ConnectScreen(
     val isConnecting = status == TunnelConnectionStatus.CONNECTING
     val isDark = uiState.preferences.isDarkTheme
 
-    // Show the user's selected country or the active tunnel country
+    // Show the user's selected country or the active tunnel country matching that country code
     val displayNode = if (!uiState.isAutoFastestMode) {
-        uiState.selectedNode
+        uiState.telemetry.activeNode?.takeIf {
+            it.countryCode.equals(uiState.selectedNode.countryCode, ignoreCase = true)
+        } ?: uiState.selectedNode
     } else {
         uiState.telemetry.activeNode ?: uiState.selectedNode
     }
@@ -181,6 +189,7 @@ fun ConnectScreen(
     } else {
         uiState.telemetry.verifiedExitCountry ?: displayNode.countryName
     }
+    val liveExitIp = uiState.telemetry.verifiedExitIp ?: displayNode.ipAddress
 
     LazyColumn(
         modifier = modifier
@@ -287,6 +296,14 @@ fun ConnectScreen(
                                                 textAlign = TextAlign.Center
                                             )
                                         }
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = "Exit IP: $liveExitIp • ${displayNode.cityName}",
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontFamily = JetBrainsMonoFontFamily
+                                            ),
+                                            color = EmeraldConnected
+                                        )
                                     }
 
                                     TunnelConnectionStatus.CONNECTING -> {
@@ -299,7 +316,7 @@ fun ConnectScreen(
                                         )
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
-                                            text = "Connecting to ${displayNode.flagEmoji} ${displayNode.countryName} (${displayNode.cityName})",
+                                            text = "Switching to ${displayNode.flagEmoji} ${displayNode.countryName} (${displayNode.cityName})",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             textAlign = TextAlign.Center
@@ -440,27 +457,90 @@ fun ConnectScreen(
             }
         }
 
-        // 4. Footer Signature Badge: "Made with love by Ashir ♥️"
+        // 4. Dedicated Developer Credits Glass Card ("Made with love by Ashir ♥️")
         item {
-            IosGlassCard(
+            DeveloperCreditsGlassBanner(
                 isDark = isDark,
-                cornerRadius = 50.dp,
-                modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
+                onClick = onOpenDeveloperCredits
+            )
+        }
+    }
+}
+
+/**
+ * Prominent iPhone Glass Developer Credit Banner honoring Ashir ♥️.
+ */
+@Composable
+fun DeveloperCreditsGlassBanner(
+    isDark: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    IosGlassCard(
+        isDark = isDark,
+        cornerRadius = 22.dp,
+        accentGlowColor = FireOrange,
+        modifier = modifier
+            .fillMaxWidth()
+            .widthIn(max = 560.dp)
+            .clickable(onClick = onClick)
+            .testTag("developer_credits_card")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    shape = CircleShape,
+                    color = FireCrimson.copy(alpha = 0.16f),
+                    border = BorderStroke(1.dp, FireCrimson.copy(alpha = 0.4f)),
+                    modifier = Modifier.size(38.dp)
                 ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.Favorite,
+                            contentDescription = null,
+                            tint = FireCrimson,
+                            modifier = Modifier.size(19.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "Made with love by Ashir ♥️",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.ExtraBold
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Icon(
+                            imageVector = Icons.Default.Verified,
+                            contentDescription = "Verified Developer",
+                            tint = SkyBluePrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                     Text(
-                        text = stringResource(R.string.made_by_ashir),
-                        style = MaterialTheme.typography.labelLarge.copy(
-                            fontWeight = FontWeight.SemiBold
-                        ),
+                        text = "Creator & Lead Architect of A VPN • Tap for Credits",
+                        style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
+
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
+                contentDescription = "Open Developer Credits",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(14.dp)
+            )
         }
     }
 }
@@ -520,7 +600,6 @@ private fun RealtimeLiveIndicatorPill(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
-            // Pulsing real-time dot
             Box(
                 modifier = Modifier
                     .size(8.dp)
@@ -532,7 +611,6 @@ private fun RealtimeLiveIndicatorPill(
                     )
             )
 
-            // Animated 3-bar real-time activity equalizer
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
@@ -695,7 +773,6 @@ private fun FireConnectOrb(
             .size(196.dp)
             .scale(orbScale)
     ) {
-        // Animated Fire / Flame Aura & Rising Embers Canvas
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
@@ -705,7 +782,6 @@ private fun FireConnectOrb(
             val baseRadius = size.minDimension * 0.36f
 
             if (isFireActive) {
-                // 1. Outer Fiery Radial Heat Glow
                 drawCircle(
                     brush = Brush.radialGradient(
                         colors = listOf(
@@ -721,14 +797,12 @@ private fun FireConnectOrb(
                     center = center
                 )
 
-                // 2. Dynamic Undulating Flame Crown Around the Orb (24 flame tongues)
                 val flamePathOuter = Path()
                 val flamePathInner = Path()
                 val steps = 72
                 for (i in 0..steps) {
                     val angle = (i.toFloat() / steps) * (2f * PI.toFloat())
-                    // Upward bias so flames lick higher near the top (-PI/2)
-                    val upwardLift = (( -sin(angle) + 1f ) * 0.5f) * 14.dp.toPx()
+                    val upwardLift = ((-sin(angle) + 1f) * 0.5f) * 14.dp.toPx()
                     val wave1 = sin(angle * 7f + flamePhase * 2f) * 7.dp.toPx()
                     val wave2 = cos(angle * 11f - flamePhase * 3f) * 5.dp.toPx()
                     val rOuter = baseRadius + 14.dp.toPx() + upwardLift + wave1 + wave2
@@ -771,7 +845,6 @@ private fun FireConnectOrb(
                     )
                 )
 
-                // 3. Rising Glowing Fire Sparks / Embers
                 for (sparkIdx in 0 until 12) {
                     val seedAngle = (sparkIdx / 12f) * (2f * PI.toFloat()) + (flamePhase * 0.3f)
                     val progress = (emberRise + (sparkIdx * 0.13f)) % 1f
@@ -791,7 +864,6 @@ private fun FireConnectOrb(
                     )
                 }
             } else {
-                // Standby iPhone Glass Cyan Aura
                 drawCircle(
                     color = SkyBluePrimary.copy(alpha = 0.12f),
                     radius = size.minDimension * 0.45f
@@ -804,7 +876,6 @@ private fun FireConnectOrb(
             }
         }
 
-        // Core Interactive Glassmorphic / Fire Orb Button
         val buttonShape = CircleShape
         val orbBrush = when {
             isConnected -> Brush.linearGradient(

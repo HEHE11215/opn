@@ -18,8 +18,6 @@ import com.example.model.VpnProtocol
 import com.example.model.VpnRegion
 import com.example.vpn.AetherVpnService
 import com.example.vpn.AetherVpnStateBus
-import com.example.vpn.LocalTunnelGateway
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -27,16 +25,35 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.util.Locale
 
 /**
- * 2-Tab Consumer Navigation for A VPN (Removed the 3rd "Open Audit" tab as requested).
+ * 2-Tab Consumer Navigation for A VPN.
  */
 enum class AetherTab(val route: String, val label: String) {
     CONNECT("connect_dashboard", "Connect"),
     NODES("worldwide_nodes", "Servers")
 }
+
+enum class VpnPopupTone {
+    CONNECTED,
+    CONNECTING,
+    DISCONNECTED,
+    THEME,
+    INFO
+}
+
+/**
+ * Rich Glass Popup Notification shown whenever an event occurs (Connect, Disconnect,
+ * Server Switch, Theme Change, Server Sync).
+ */
+data class VpnEventPopup(
+    val id: Long = System.currentTimeMillis(),
+    val title: String,
+    val subtitle: String,
+    val badgeText: String = "By Ashir ♥️",
+    val tone: VpnPopupTone = VpnPopupTone.INFO
+)
 
 /**
  * Immutable UI state for the A VPN application.
@@ -54,11 +71,9 @@ data class VpnUiState(
     val selectedRegion: VpnRegion = VpnRegion.ALL,
     val sortOption: NodeSortOption = NodeSortOption.LOWEST_PING,
     val isSyncingApi: Boolean = false,
-    val isPingingNodes: Boolean = false,
-    val singlePingingNodeId: String? = null,
-    val inspectedNode: VpnNode? = null,
     val showAddCustomNodeModal: Boolean = false,
-    val bannerFeedback: String? = null
+    val showDeveloperCreditsModal: Boolean = false,
+    val activePopup: VpnEventPopup? = null
 )
 
 private data class FilterBarState(
@@ -67,19 +82,15 @@ private data class FilterBarState(
     val selectedRegion: VpnRegion = VpnRegion.ALL,
     val sortOption: NodeSortOption = NodeSortOption.LOWEST_PING,
     val isSyncingApi: Boolean = false,
-    val isPingingNodes: Boolean = false,
-    val singlePingingNodeId: String? = null,
-    val inspectedNode: VpnNode? = null,
     val showAddCustomNodeModal: Boolean = false,
-    val bannerFeedback: String? = null,
+    val showDeveloperCreditsModal: Boolean = false,
+    val activePopup: VpnEventPopup? = null,
     val manualSelectedNodeOverride: VpnNode? = null,
     val isAutoFastestOverride: Boolean? = null
 )
 
 /**
- * Clean MVVM ViewModel for A VPN.
- * Fixes the manual server selection race condition by holding an immediate synchronous
- * `manualSelectedNodeOverride` so tapping any country connects directly to that country!
+ * Clean MVVM ViewModel for **A VPN** (Crafted by Ashir ♥️).
  */
 class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -87,6 +98,8 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _nodes = MutableStateFlow(repository.getVerifiedCommunityNodes())
     private val _filterState = MutableStateFlow(FilterBarState())
+    private var lastObservedStatus: TunnelConnectionStatus = TunnelConnectionStatus.DISCONNECTED
+    private var lastConnectedCountryCode: String? = null
 
     val uiState: StateFlow<VpnUiState> = combine(
         _nodes,
@@ -151,11 +164,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             selectedRegion = filter.selectedRegion,
             sortOption = filter.sortOption,
             isSyncingApi = filter.isSyncingApi,
-            isPingingNodes = filter.isPingingNodes,
-            singlePingingNodeId = filter.singlePingingNodeId,
-            inspectedNode = filter.inspectedNode,
             showAddCustomNodeModal = filter.showAddCustomNodeModal,
-            bannerFeedback = filter.bannerFeedback
+            showDeveloperCreditsModal = filter.showDeveloperCreditsModal,
+            activePopup = filter.activePopup
         )
     }.stateIn(
         scope = viewModelScope,
@@ -170,6 +181,96 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     init {
         AetherVpnStateBus.updateNodePool(repository.getVerifiedCommunityNodes())
         syncLivePublicNodes(silent = true)
+
+        // Observe telemetry status transitions and trigger rich glass event popups automatically
+        viewModelScope.launch {
+            AetherVpnStateBus.telemetry.collect { tel ->
+                val newStatus = tel.status
+                val node = tel.activeNode
+                if (newStatus != lastObservedStatus ||
+                    (newStatus == TunnelConnectionStatus.CONNECTED && node?.countryCode != lastConnectedCountryCode)
+                ) {
+                    when (newStatus) {
+                        TunnelConnectionStatus.CONNECTING -> {
+                            if (node != null) {
+                                showEventPopup(
+                                    title = "Igniting ${node.flagEmoji} ${node.countryName}…",
+                                    subtitle = "Opening encrypted tunnel to ${node.cityName} (${node.ipAddress})",
+                                    badgeText = "Connecting • Ashir ♥️",
+                                    tone = VpnPopupTone.CONNECTING
+                                )
+                            }
+                        }
+
+                        TunnelConnectionStatus.CONNECTED -> {
+                            if (node != null) {
+                                lastConnectedCountryCode = node.countryCode
+                                val exitIp = tel.verifiedExitIp ?: node.ipAddress
+                                showEventPopup(
+                                    title = "Connected to ${node.flagEmoji} ${node.countryName}!",
+                                    subtitle = "Exit IP: $exitIp • ${node.cityName} • ${node.pingMs} ms",
+                                    badgeText = "Secured • By Ashir ♥️",
+                                    tone = VpnPopupTone.CONNECTED
+                                )
+                            }
+                        }
+
+                        TunnelConnectionStatus.DISCONNECTED -> {
+                            if (lastObservedStatus == TunnelConnectionStatus.CONNECTED ||
+                                lastObservedStatus == TunnelConnectionStatus.CONNECTING
+                            ) {
+                                lastConnectedCountryCode = null
+                                showEventPopup(
+                                    title = "VPN Tunnel Disconnected",
+                                    subtitle = "Your connection is back to normal • Tap orb to reconnect",
+                                    badgeText = "Standby • By Ashir ♥️",
+                                    tone = VpnPopupTone.DISCONNECTED
+                                )
+                            }
+                        }
+
+                        TunnelConnectionStatus.ERROR -> {
+                            showEventPopup(
+                                title = "Connection Interrupted",
+                                subtitle = tel.errorMessage ?: "Please try another server or tap Auto-Connect",
+                                badgeText = "A VPN • By Ashir ♥️",
+                                tone = VpnPopupTone.DISCONNECTED
+                            )
+                        }
+
+                        else -> {}
+                    }
+                    lastObservedStatus = newStatus
+                }
+            }
+        }
+    }
+
+    fun showEventPopup(
+        title: String,
+        subtitle: String,
+        badgeText: String = "By Ashir ♥️",
+        tone: VpnPopupTone = VpnPopupTone.INFO
+    ) {
+        _filterState.update {
+            it.copy(
+                activePopup = VpnEventPopup(
+                    id = System.currentTimeMillis(),
+                    title = title,
+                    subtitle = subtitle,
+                    badgeText = badgeText,
+                    tone = tone
+                )
+            )
+        }
+    }
+
+    fun dismissPopup() {
+        _filterState.update { it.copy(activePopup = null) }
+    }
+
+    fun setShowDeveloperCreditsModal(show: Boolean) {
+        _filterState.update { it.copy(showDeveloperCreditsModal = show) }
     }
 
     fun selectTab(tab: AetherTab) {
@@ -192,10 +293,6 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         _filterState.update { it.copy(showAddCustomNodeModal = show) }
     }
 
-    fun dismissBannerFeedback() {
-        _filterState.update { it.copy(bannerFeedback = null) }
-    }
-
     /**
      * Switches back to Smart Auto-Fastest Mode and returns the fastest node.
      */
@@ -208,8 +305,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 manualSelectedNodeOverride = null,
                 isAutoFastestOverride = true,
-                activeTab = AetherTab.CONNECT,
-                bannerFeedback = "Auto-Connecting fastest server: ${fastest.flagEmoji} ${fastest.countryName}"
+                activeTab = AetherTab.CONNECT
             )
         }
         viewModelScope.launch {
@@ -227,8 +323,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 manualSelectedNodeOverride = node,
                 isAutoFastestOverride = false,
-                activeTab = AetherTab.CONNECT,
-                bannerFeedback = "Selected ${node.flagEmoji} ${node.countryName}"
+                activeTab = AetherTab.CONNECT
             )
         }
         viewModelScope.launch {
@@ -246,6 +341,16 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             repository.updateDarkTheme(isDark)
         }
+        showEventPopup(
+            title = if (isDark) "🌙 Dark Glass Mode Activated" else "☀️ Light Glass Mode Activated",
+            subtitle = if (isDark) {
+                "Obsidian iPhone Frosted Glass UI • Crafted by Ashir ♥️"
+            } else {
+                "Daylight iPhone Frosted Glass UI • Crafted by Ashir ♥️"
+            },
+            badgeText = "Theme • By Ashir ♥️",
+            tone = VpnPopupTone.THEME
+        )
     }
 
     fun syncLivePublicNodes(silent: Boolean = false) {
@@ -258,7 +363,6 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 val combined = repository.deduplicateFastestPerCountry(customNodes + uniqueCountryNodes)
                 _nodes.value = combined
 
-                // If user manually selected a country, refresh its IP/port with the latest fastest server for that country
                 val currentManual = _filterState.value.manualSelectedNodeOverride
                 if (currentManual != null) {
                     val updatedManual = combined.firstOrNull {
@@ -271,23 +375,25 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
                 if (!silent) {
                     val best = combined.firstOrNull()
-                    _filterState.update {
-                        it.copy(
-                            bannerFeedback = if (best != null) {
-                                "Updated ${combined.size} countries • Fastest: ${best.flagEmoji} ${best.countryName} (${best.pingMs} ms)"
-                            } else {
-                                "Updated ${combined.size} countries"
-                            }
-                        )
-                    }
+                    showEventPopup(
+                        title = "🌍 Synced ${combined.size} Countries",
+                        subtitle = if (best != null) {
+                            "Fastest verified: ${best.flagEmoji} ${best.countryName} (${best.pingMs} ms)"
+                        } else {
+                            "All country relays refreshed"
+                        },
+                        badgeText = "Live Sync • Ashir ♥️",
+                        tone = VpnPopupTone.INFO
+                    )
                 }
             }.onFailure {
                 if (!silent) {
-                    _filterState.update {
-                        it.copy(
-                            bannerFeedback = "Loaded ${uiState.value.allNodes.size} countries"
-                        )
-                    }
+                    showEventPopup(
+                        title = "🌍 Server List Ready",
+                        subtitle = "${uiState.value.allNodes.size} countries available for connection",
+                        badgeText = "A VPN • By Ashir ♥️",
+                        tone = VpnPopupTone.INFO
+                    )
                 }
             }
             _filterState.update { it.copy(isSyncingApi = false) }
@@ -332,12 +438,13 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
         AetherVpnStateBus.updateNodePool(_nodes.value + AetherVpnStateBus.nodePool.value)
         selectManualNode(customNode)
-        _filterState.update {
-            it.copy(
-                showAddCustomNodeModal = false,
-                bannerFeedback = "Added & selected ${customNode.flagEmoji} ${customNode.countryName}"
-            )
-        }
+        _filterState.update { it.copy(showAddCustomNodeModal = false) }
+        showEventPopup(
+            title = "Added ${customNode.flagEmoji} ${customNode.countryName}",
+            subtitle = "Custom server $cleanIp:$port locked & ready",
+            badgeText = "Custom • By Ashir ♥️",
+            tone = VpnPopupTone.CONNECTED
+        )
     }
 
     /**

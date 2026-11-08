@@ -32,16 +32,19 @@ import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 
 /**
- * LocalTunnelGateway — High-Reliability Local Tunneling Bridge with Strict TLS Certificate Verification.
+ * LocalTunnelGateway — High-Reliability Local Tunneling Bridge with Strict Country Isolation
+ * and Active Socket Severing on Server Switch.
  *
- * Key anti-error guarantee:
- * - Public free HTTP proxies often inject captive portals or self-signed certificates that trigger
- *   `NET::ERR_CERT_AUTHORITY_INVALID` in Chrome (as seen on speedtest.net).
- * - [verifyNodeHttpsTunnel] performs a full **Android System TrustStore TLS 1.2/1.3 handshake**
- *   ([SSLSocket.startHandshake] + [HttpsURLConnection.getDefaultHostnameVerifier]) to
- *   `www.google.com:443` and verifies an authentic `HTTP/1.1 204` response BEFORE any node is
- *   allowed into the verified pool!
- * - Any proxy that intercepts SSL/TLS or alters certificates is immediately rejected.
+ * Key guarantees:
+ * 1. **Active Socket Severing**: Tracks all open client & upstream sockets in [activeTunnelSockets]
+ *    and forcefully closes them in [stop]. This prevents Chrome/WebView HTTP/2 Keep-Alive from
+ *    staying stuck on the previous country (e.g. Italy) when switching servers!
+ * 2. **Strict Country Isolation**: When a user selects a specific country, failover ONLY uses
+ *    verified backup nodes from that **exact same country**, never routing traffic through another
+ *    country's server.
+ * 3. **Protected Verification Sockets**: Calls `vpnService?.protect(socket)` during node
+ *    verification so probing a new server while the VPN is already active never loops through the
+ *    existing tunnel.
  */
 class LocalTunnelGateway(
     private val vpnService: VpnService? = null
@@ -57,6 +60,7 @@ class LocalTunnelGateway(
     private var keepDisplayNodeLocked: Boolean = false
 
     private val fallbackVerifiedNodes = CopyOnWriteArrayList<VpnNode>()
+    private val activeTunnelSockets = CopyOnWriteArrayList<Socket>()
 
     val totalBytesReceived = AtomicLong(0L)
     val totalBytesSent = AtomicLong(0L)
@@ -70,13 +74,25 @@ class LocalTunnelGateway(
         verifiedBackups: List<VpnNode>,
         lockDisplayNode: Boolean = false
     ): Int {
+        // Sever all existing connections from any previous server immediately
         stop()
+
         primaryNode = initialNode
         keepDisplayNodeLocked = lockDisplayNode
         fallbackVerifiedNodes.clear()
-        fallbackVerifiedNodes.addAll(
-            verifiedBackups.filter { "${it.ipAddress}:${it.port}" != "${initialNode.ipAddress}:${initialNode.port}" }
-        )
+
+        // If manual country is locked, ONLY allow backups from the exact same country!
+        val allowedBackups = if (lockDisplayNode) {
+            verifiedBackups.filter {
+                it.countryCode.equals(initialNode.countryCode, ignoreCase = true) &&
+                    "${it.ipAddress}:${it.port}" != "${initialNode.ipAddress}:${initialNode.port}"
+            }
+        } else {
+            verifiedBackups.filter {
+                "${it.ipAddress}:${it.port}" != "${initialNode.ipAddress}:${initialNode.port}"
+            }
+        }
+        fallbackVerifiedNodes.addAll(allowedBackups)
 
         val server = ServerSocket()
         server.reuseAddress = true
@@ -86,7 +102,7 @@ class LocalTunnelGateway(
         val boundPort = server.localPort
         AetherVpnStateBus.appendLog(
             tag = "GATEWAY",
-            message = "Gateway active on 127.0.0.1:$boundPort -> ${initialNode.flagEmoji} ${initialNode.countryName} (${initialNode.ipAddress}:${initialNode.port})",
+            message = "Gateway bound 127.0.0.1:$boundPort -> ${initialNode.flagEmoji} ${initialNode.countryName} (${initialNode.ipAddress}:${initialNode.port})",
             isHighlight = true
         )
 
@@ -97,6 +113,7 @@ class LocalTunnelGateway(
                 } catch (_: Exception) {
                     break
                 }
+                activeTunnelSockets.add(clientSocket)
                 launch {
                     handleClientConnection(clientSocket)
                 }
@@ -105,6 +122,10 @@ class LocalTunnelGateway(
         return boundPort
     }
 
+    /**
+     * Stops the listener AND forcefully closes all active client/upstream sockets so
+     * browser persistent connections immediately reconnect through the new server.
+     */
     fun stop() {
         acceptJob?.cancel()
         acceptJob = null
@@ -113,6 +134,15 @@ class LocalTunnelGateway(
         } catch (_: Exception) {
         }
         serverSocket = null
+
+        val socketsToClose = ArrayList(activeTunnelSockets)
+        activeTunnelSockets.clear()
+        for (sock in socketsToClose) {
+            try {
+                sock.close()
+            } catch (_: Exception) {
+            }
+        }
     }
 
     fun destroy() {
@@ -121,31 +151,23 @@ class LocalTunnelGateway(
     }
 
     private suspend fun handleClientConnection(client: Socket) = withContext(Dispatchers.IO) {
+        var upstreamSocket: Socket? = null
         try {
             client.soTimeout = 25_000
             client.tcpNoDelay = true
             val clientIn = BufferedInputStream(client.getInputStream())
             val clientOut = client.getOutputStream()
 
-            val headerBytes = readHttpHeaderBlock(clientIn) ?: run {
-                client.close()
-                return@withContext
-            }
+            val headerBytes = readHttpHeaderBlock(clientIn) ?: return@withContext
             totalBytesSent.addAndGet(headerBytes.size.toLong())
 
             val headerStr = String(headerBytes, Charsets.ISO_8859_1)
             val lines = headerStr.split("\r\n")
             val requestLine = lines.firstOrNull()?.trim().orEmpty()
-            if (requestLine.isEmpty()) {
-                client.close()
-                return@withContext
-            }
+            if (requestLine.isEmpty()) return@withContext
 
             val parts = requestLine.split(" ")
-            if (parts.size < 2) {
-                client.close()
-                return@withContext
-            }
+            if (parts.size < 2) return@withContext
 
             val method = parts[0].uppercase()
             val targetToken = parts[1]
@@ -155,28 +177,28 @@ class LocalTunnelGateway(
                 val targetHost = hostPort[0].trim()
                 val targetPort = hostPort.getOrNull(1)?.toIntOrNull() ?: 443
 
-                val upstreamSocket = openUpstreamTunnelWithFailover(targetHost, targetPort)
-                if (upstreamSocket == null) {
+                upstreamSocket = openUpstreamTunnelWithFailover(targetHost, targetPort)
+                val upSock = upstreamSocket
+                if (upSock == null) {
                     val errResp = "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"
                     clientOut.write(errResp.toByteArray(Charsets.ISO_8859_1))
                     clientOut.flush()
-                    client.close()
                     return@withContext
                 }
-
+                activeTunnelSockets.add(upSock)
                 totalConnectionsHandled.incrementAndGet()
 
                 val okResp = "HTTP/1.1 200 Connection Established\r\n\r\n"
                 clientOut.write(okResp.toByteArray(Charsets.ISO_8859_1))
                 clientOut.flush()
 
-                val upstreamIn = upstreamSocket.getInputStream()
-                val upstreamOut = upstreamSocket.getOutputStream()
+                val upstreamIn = upSock.getInputStream()
+                val upstreamOut = upSock.getOutputStream()
 
                 val clientToUpstream = launch {
                     pipeStreams(clientIn, upstreamOut, isUpload = true)
                     try {
-                        upstreamSocket.shutdownOutput()
+                        upSock.shutdownOutput()
                     } catch (_: Exception) {
                     }
                 }
@@ -190,30 +212,23 @@ class LocalTunnelGateway(
 
                 clientToUpstream.join()
                 upstreamToClient.join()
-                try {
-                    upstreamSocket.close()
-                } catch (_: Exception) {
-                }
             } else {
-                val parsedTarget = parseHttpUrlTarget(targetToken, lines)
-                if (parsedTarget == null) {
-                    client.close()
-                    return@withContext
-                }
+                val parsedTarget = parseHttpUrlTarget(targetToken, lines) ?: return@withContext
                 val (targetHost, targetPort, relativePath) = parsedTarget
 
-                val upstreamSocket = openUpstreamTunnelWithFailover(targetHost, targetPort)
-                if (upstreamSocket == null) {
+                upstreamSocket = openUpstreamTunnelWithFailover(targetHost, targetPort)
+                val upSock = upstreamSocket
+                if (upSock == null) {
                     val errResp = "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"
                     clientOut.write(errResp.toByteArray(Charsets.ISO_8859_1))
                     clientOut.flush()
-                    client.close()
                     return@withContext
                 }
-
+                activeTunnelSockets.add(upSock)
                 totalConnectionsHandled.incrementAndGet()
-                val upstreamIn = upstreamSocket.getInputStream()
-                val upstreamOut = upstreamSocket.getOutputStream()
+
+                val upstreamIn = upSock.getInputStream()
+                val upstreamOut = upSock.getOutputStream()
 
                 val httpVersion = parts.getOrNull(2) ?: "HTTP/1.1"
                 val rewrittenHeaders = buildString {
@@ -233,13 +248,17 @@ class LocalTunnelGateway(
                 totalBytesSent.addAndGet(outBytes.size.toLong())
 
                 pipeStreams(upstreamIn, clientOut, isUpload = false)
-                try {
-                    upstreamSocket.close()
-                } catch (_: Exception) {
-                }
             }
         } catch (_: Exception) {
         } finally {
+            upstreamSocket?.let {
+                activeTunnelSockets.remove(it)
+                try {
+                    it.close()
+                } catch (_: Exception) {
+                }
+            }
+            activeTunnelSockets.remove(client)
             try {
                 client.close()
             } catch (_: Exception) {
@@ -248,13 +267,13 @@ class LocalTunnelGateway(
     }
 
     /**
-     * Opens a tunnel to [targetHost]:[targetPort] via the active node or verified backups.
+     * Opens a tunnel to [targetHost]:[targetPort] via the active node or same-country backups.
      */
     private fun openUpstreamTunnelWithFailover(targetHost: String, targetPort: Int): Socket? {
         val primary = primaryNode ?: return null
         val candidates = buildList {
             add(primary)
-            addAll(fallbackVerifiedNodes.take(6))
+            addAll(fallbackVerifiedNodes.take(5))
         }
 
         for (candidate in candidates) {
@@ -262,18 +281,27 @@ class LocalTunnelGateway(
                 node = candidate,
                 targetHost = targetHost,
                 targetPort = targetPort,
-                timeoutMs = 4500
+                timeoutMs = 4200
             )
             if (connectedSocket != null) {
-                if (candidate.id != primary.id && !keepDisplayNodeLocked) {
+                if ("${candidate.ipAddress}:${candidate.port}" != "${primary.ipAddress}:${primary.port}") {
                     primaryNode = candidate
-                    AetherVpnStateBus.updateTelemetry {
-                        it.copy(
-                            activeNode = candidate,
-                            verifiedExitIp = candidate.ipAddress,
-                            verifiedExitCountry = candidate.countryName,
-                            verifiedExitCity = candidate.cityName
-                        )
+                    if (!keepDisplayNodeLocked) {
+                        AetherVpnStateBus.updateTelemetry {
+                            it.copy(
+                                activeNode = candidate,
+                                verifiedExitIp = candidate.ipAddress,
+                                verifiedExitCountry = candidate.countryName,
+                                verifiedExitCity = candidate.cityName
+                            )
+                        }
+                    } else {
+                        // Update only the IP in telemetry while keeping the chosen country locked
+                        AetherVpnStateBus.updateTelemetry {
+                            it.copy(
+                                verifiedExitIp = candidate.ipAddress
+                            )
+                        }
                     }
                 }
                 return connectedSocket
@@ -288,7 +316,6 @@ class LocalTunnelGateway(
         targetPort: Int,
         timeoutMs: Int = 4000
     ): Socket? {
-        // Strongly prioritize SOCKS5 and SOCKS4 first to avoid HTTP MITM proxies
         val orderedTypes = listOf(
             node.relayType,
             RelayTunnelType.SOCKS5,
@@ -371,21 +398,13 @@ class LocalTunnelGateway(
     companion object {
 
         /**
-         * STRICT END-TO-END TLS CERTIFICATE & HTTP 204 VERIFICATION:
-         * 1. Connects to [node] and opens a tunnel to `www.google.com:443`.
-         * 2. Wraps the socket in Android's default [SSLSocketFactory] with SNI & endpoint
-         *    identification (`HTTPS`) enabled.
-         * 3. Completes `sslSocket.startHandshake()` and verifies the peer certificate with
-         *    [HttpsURLConnection.getDefaultHostnameVerifier].
-         * 4. Sends `GET /generate_204 HTTP/1.1` over the encrypted TLS stream and confirms an
-         *    authentic `HTTP/1.1 204` (or `200`) response from Google.
-         *
-         * Any proxy that injects its own certificate (`NET::ERR_CERT_AUTHORITY_INVALID`),
-         * captive portal, or corrupts TLS is 100% rejected here!
+         * Verifies a node's end-to-end HTTPS tunnel capability with optional [protectSocket]
+         * callback so verification works even while a VPN interface is active.
          */
         fun verifyNodeHttpsTunnel(
             node: VpnNode,
-            timeoutMs: Int = 2600
+            timeoutMs: Int = 2400,
+            protectSocket: ((Socket) -> Boolean)? = null
         ): Pair<RelayTunnelType, Int>? {
             val typesToTest = listOf(
                 node.relayType,
@@ -401,6 +420,7 @@ class LocalTunnelGateway(
                 val startNs = System.nanoTime()
                 val rawSocket = Socket()
                 try {
+                    protectSocket?.invoke(rawSocket)
                     rawSocket.tcpNoDelay = true
                     rawSocket.soTimeout = timeoutMs
                     rawSocket.connect(InetSocketAddress(node.ipAddress, node.port), timeoutMs)
@@ -417,7 +437,6 @@ class LocalTunnelGateway(
                         continue
                     }
 
-                    // Upgrade to real TLS and verify X.509 Certificate Authority & Hostname
                     val sslSocket = sslFactory.createSocket(rawSocket, "www.google.com", 443, true) as SSLSocket
                     sslSocket.soTimeout = timeoutMs
                     val sslParams = SSLParameters().apply {
@@ -431,7 +450,6 @@ class LocalTunnelGateway(
                         continue
                     }
 
-                    // Send real HTTPS request inside verified TLS tunnel
                     val tlsOut = sslSocket.getOutputStream()
                     val tlsIn = sslSocket.getInputStream()
                     val req = "GET /generate_204 HTTP/1.1\r\nHost: www.google.com\r\nConnection: close\r\n\r\n"
@@ -441,7 +459,10 @@ class LocalTunnelGateway(
                     val respLine = tlsIn.bufferedReader(Charsets.ISO_8859_1).readLine().orEmpty()
                     sslSocket.close()
 
-                    if (respLine.startsWith("HTTP/1.1 204") || respLine.startsWith("HTTP/1.1 200") || respLine.startsWith("HTTP/2")) {
+                    if (respLine.startsWith("HTTP/1.1 204") ||
+                        respLine.startsWith("HTTP/1.1 200") ||
+                        respLine.startsWith("HTTP/2")
+                    ) {
                         val rttMs = ((System.nanoTime() - startNs) / 1_000_000L).toInt().coerceIn(18, 2500)
                         return type to rttMs
                     }
@@ -464,9 +485,9 @@ class LocalTunnelGateway(
             try {
                 val url = URL("https://ipwho.is/")
                 val conn = (url.openConnection(proxy) as HttpsURLConnection).apply {
-                    connectTimeout = 5000
-                    readTimeout = 5000
-                    setRequestProperty("User-Agent", "AetherNode-VPN/1.0")
+                    connectTimeout = 4500
+                    readTimeout = 4500
+                    setRequestProperty("User-Agent", "AVPN/1.0")
                 }
                 if (conn.responseCode == 200) {
                     val body = conn.inputStream.bufferedReader().use { it.readText() }
@@ -488,9 +509,9 @@ class LocalTunnelGateway(
             try {
                 val url = URL("http://ip-api.com/json/?fields=status,country,countryCode,city,isp,query")
                 val conn = (url.openConnection(proxy) as HttpURLConnection).apply {
-                    connectTimeout = 4500
-                    readTimeout = 4500
-                    setRequestProperty("User-Agent", "AetherNode-VPN/1.0")
+                    connectTimeout = 4000
+                    readTimeout = 4000
+                    setRequestProperty("User-Agent", "AVPN/1.0")
                 }
                 if (conn.responseCode == 200) {
                     val body = conn.inputStream.bufferedReader().use { it.readText() }
