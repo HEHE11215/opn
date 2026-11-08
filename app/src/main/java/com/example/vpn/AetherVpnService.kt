@@ -255,8 +255,8 @@ class AetherVpnService : VpnService() {
         requestedNode: VpnNode
     ): Pair<VpnNode, List<VpnNode>> = coroutineScope {
         val directCheck = LocalTunnelGateway.verifyNodeHttpsTunnel(requestedNode, timeoutMs = 2400)
-        val pool = AetherVpnStateBus.nodePool.value
-        val alreadyVerifiedInPool = pool.filter { it.isVerifiedWorking }
+        var pool = AetherVpnStateBus.nodePool.value
+        var alreadyVerifiedInPool = pool.filter { it.isVerifiedWorking }
 
         if (directCheck != null) {
             val verifiedPrimary = requestedNode.copy(
@@ -264,38 +264,41 @@ class AetherVpnService : VpnService() {
                 pingMs = directCheck.second,
                 isVerifiedWorking = true
             )
-            AetherVpnStateBus.appendLog(
-                tag = "VERIFY",
-                message = "Verified ${verifiedPrimary.flagEmoji} ${verifiedPrimary.cityName} (${verifiedPrimary.ipAddress}:${verifiedPrimary.port}) tunnels HTTPS port-443 in ${verifiedPrimary.pingMs}ms",
-                isHighlight = true
-            )
             return@coroutineScope verifiedPrimary to alreadyVerifiedInPool
         }
 
-        // If we already have verified working nodes in the pool, pick one matching the country/region first
+        // If no verified nodes are in the pool yet, auto-fetch live worldwide nodes right now!
+        if (alreadyVerifiedInPool.isEmpty()) {
+            AetherVpnStateBus.appendLog(
+                tag = "AUTO-FETCH",
+                message = "Auto-fetching live worldwide servers for instant connection…"
+            )
+            runCatching {
+                com.example.data.PublicNodeRepository(applicationContext).fetchLivePublicNodes()
+            }
+            pool = AetherVpnStateBus.nodePool.value
+            alreadyVerifiedInPool = pool.filter { it.isVerifiedWorking }
+        }
+
         if (alreadyVerifiedInPool.isNotEmpty()) {
             val bestMatch = alreadyVerifiedInPool.firstOrNull { it.countryCode == requestedNode.countryCode }
                 ?: alreadyVerifiedInPool.firstOrNull { it.region == requestedNode.region }
+                ?: alreadyVerifiedInPool.minByOrNull { it.pingMs }
                 ?: alreadyVerifiedInPool.first()
 
-            AetherVpnStateBus.appendLog(
-                tag = "FAILOVER",
-                message = "Selected node ${requestedNode.ipAddress} was offline; auto-switched to verified live relay ${bestMatch.flagEmoji} ${bestMatch.cityName} (${bestMatch.ipAddress}:${bestMatch.port})",
-                isHighlight = true
-            )
             return@coroutineScope bestMatch to alreadyVerifiedInPool
         }
 
-        // Otherwise probe candidates from the pool in parallel right now
+        // Probe candidates in parallel with strict SSLSocket Google CA verification
         val candidatesToProbe = (
             pool.filter { it.countryCode == requestedNode.countryCode } +
                 pool.filter { it.region == requestedNode.region } +
                 pool
-            ).distinctBy { "${it.ipAddress}:${it.port}" }.take(24)
+            ).distinctBy { "${it.ipAddress}:${it.port}" }.take(28)
 
         val probeResults = candidatesToProbe.map { candidate ->
             async(Dispatchers.IO) {
-                val ok = LocalTunnelGateway.verifyNodeHttpsTunnel(candidate, timeoutMs = 2200)
+                val ok = LocalTunnelGateway.verifyNodeHttpsTunnel(candidate, timeoutMs = 2400)
                 if (ok != null) {
                     candidate.copy(
                         relayType = ok.first,
@@ -310,11 +313,6 @@ class AetherVpnService : VpnService() {
 
         if (probeResults.isNotEmpty()) {
             val winner = probeResults.first()
-            AetherVpnStateBus.appendLog(
-                tag = "FAILOVER",
-                message = "Locked onto verified live relay ${winner.flagEmoji} ${winner.cityName} (${winner.ipAddress}:${winner.port} • ${winner.pingMs}ms)",
-                isHighlight = true
-            )
             return@coroutineScope winner to probeResults
         }
 

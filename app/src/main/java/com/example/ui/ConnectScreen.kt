@@ -1,7 +1,6 @@
 package com.example.ui
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -20,8 +19,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -38,31 +35,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.PowerSettingsNew
-import androidx.compose.material.icons.filled.Public
-import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Upload
-import androidx.compose.material.icons.filled.VerifiedUser
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -77,7 +61,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -96,10 +79,10 @@ import com.example.ui.theme.SkyBluePrimary
 import java.util.Locale
 
 /**
- * Primary One-Tap Connect Screen displaying live verified Public Exit IP & Country,
- * smart fastest-node selection, and real-time encrypted throughput telemetry.
+ * Clean, Consumer-Focused One-Tap Connect Screen.
+ * Focuses strictly on what users care about: One-tap Auto-Connect, Selected Country,
+ * Connection Status, and Live Speed.
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ConnectScreen(
     uiState: VpnUiState,
@@ -115,24 +98,22 @@ fun ConnectScreen(
     val status = uiState.telemetry.status
     val isConnected = status == TunnelConnectionStatus.CONNECTED
     val activeNode = uiState.telemetry.activeNode ?: uiState.selectedNode
-    val exitIp = uiState.telemetry.verifiedExitIp ?: activeNode.ipAddress
     val exitCountry = uiState.telemetry.verifiedExitCountry ?: activeNode.countryName
-    val exitCity = uiState.telemetry.verifiedExitCity ?: activeNode.cityName
 
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
             .testTag("connect_screen_list"),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // 1. Hero Card with World Network Topology Banner & One-Tap Power Orb
+        // 1. Hero One-Tap Auto-Connect Card
         item {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .widthIn(max = 600.dp),
+                    .widthIn(max = 560.dp),
                 shape = RoundedCornerShape(28.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surface
@@ -140,9 +121,9 @@ fun ConnectScreen(
                 border = BorderStroke(
                     width = 1.dp,
                     color = if (isConnected) {
-                        EmeraldConnected.copy(alpha = 0.38f)
+                        EmeraldConnected.copy(alpha = 0.4f)
                     } else {
-                        MaterialTheme.colorScheme.outline.copy(alpha = 0.65f)
+                        MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)
                     }
                 ),
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
@@ -150,22 +131,22 @@ fun ConnectScreen(
                 Box(modifier = Modifier.fillMaxWidth()) {
                     Image(
                         painter = painterResource(id = R.drawable.img_world_network_map_1794084364741),
-                        contentDescription = "Global relay topology map",
+                        contentDescription = null,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(190.dp),
+                            .height(180.dp),
                         contentScale = ContentScale.Crop,
-                        alpha = if (uiState.preferences.isDarkTheme) 0.16f else 0.42f
+                        alpha = if (uiState.preferences.isDarkTheme) 0.16f else 0.40f
                     )
 
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(190.dp)
+                            .height(180.dp)
                             .background(
                                 Brush.verticalGradient(
                                     colors = listOf(
-                                        MaterialTheme.colorScheme.surface.copy(alpha = 0.15f),
+                                        MaterialTheme.colorScheme.surface.copy(alpha = 0.12f),
                                         MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
                                         MaterialTheme.colorScheme.surface
                                     )
@@ -176,27 +157,23 @@ fun ConnectScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 22.dp, vertical = 20.dp),
+                            .padding(horizontal = 22.dp, vertical = 22.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        // Status Pill Badge with Public Exit IP
                         StatusPillBadge(
                             status = status,
-                            exitIp = exitIp,
                             exitCountry = exitCountry
                         )
 
-                        Spacer(modifier = Modifier.height(20.dp))
+                        Spacer(modifier = Modifier.height(22.dp))
 
-                        // Central One-Tap Encrypted Connect Button
                         OneTapConnectOrb(
                             status = status,
                             onClick = onToggleConnection
                         )
 
-                        Spacer(modifier = Modifier.height(18.dp))
+                        Spacer(modifier = Modifier.height(20.dp))
 
-                        // Session Timer & Verified Exit IP Banner
                         AnimatedContent(
                             targetState = status,
                             label = "status_caption_anim"
@@ -212,47 +189,24 @@ fun ConnectScreen(
                                             ),
                                             color = EmeraldConnected
                                         )
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        Surface(
-                                            shape = RoundedCornerShape(12.dp),
-                                            color = EmeraldConnected.copy(alpha = 0.10f),
-                                            border = BorderStroke(1.dp, EmeraldConnected.copy(alpha = 0.3f)),
-                                            modifier = Modifier
-                                                .clickable(onClick = onVerifyExitIp)
-                                                .testTag("verified_exit_ip_banner")
-                                        ) {
-                                            Column(
-                                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                                                horizontalAlignment = Alignment.CenterHorizontally
-                                            ) {
-                                                Text(
-                                                    text = "${activeNode.flagEmoji} Public Exit IP: $exitIp ($exitCity, $exitCountry)",
-                                                    style = MaterialTheme.typography.labelSmall.copy(
-                                                        fontFamily = JetBrainsMonoFontFamily,
-                                                        fontWeight = FontWeight.Bold
-                                                    ),
-                                                    color = EmeraldConnected,
-                                                    textAlign = TextAlign.Center
-                                                )
-                                                Text(
-                                                    text = "All browser & Google HTTPS traffic routed via ${activeNode.relayType.badgeLabel} • Tap to re-verify",
-                                                    style = MaterialTheme.typography.bodyMedium,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    textAlign = TextAlign.Center
-                                                )
-                                            }
-                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = "Connected to ${activeNode.flagEmoji} $exitCountry",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            textAlign = TextAlign.Center
+                                        )
                                     }
 
                                     TunnelConnectionStatus.CONNECTING -> {
                                         Text(
-                                            text = stringResource(R.string.status_connecting),
+                                            text = "Finding Fastest Server…",
                                             style = MaterialTheme.typography.titleLarge,
                                             color = AmberHandshaking
                                         )
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
-                                            text = uiState.telemetry.handshakeSummary,
+                                            text = "Verifying secure connection to ${activeNode.flagEmoji} ${activeNode.countryName}",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             textAlign = TextAlign.Center
@@ -261,17 +215,16 @@ fun ConnectScreen(
 
                                     else -> {
                                         Text(
-                                            text = stringResource(R.string.btn_tap_to_connect),
+                                            text = "Tap to Auto-Connect",
                                             style = MaterialTheme.typography.headlineMedium,
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
                                         Spacer(modifier = Modifier.height(4.dp))
-                                        val verifiedCount = uiState.allNodes.count { it.isVerifiedWorking }
                                         Text(
-                                            text = if (verifiedCount > 0) {
-                                                "$verifiedCount live HTTPS-verified nodes ready • Target: ${uiState.selectedNode.flagEmoji} ${uiState.selectedNode.cityName}"
+                                            text = if (uiState.isSyncingApi) {
+                                                "Auto-fetching fastest servers worldwide…"
                                             } else {
-                                                "One-tap zero-configuration tunnel to ${uiState.selectedNode.flagEmoji} ${uiState.selectedNode.cityName}"
+                                                "Automatically connects to the fastest server"
                                             },
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -282,189 +235,78 @@ fun ConnectScreen(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(18.dp))
+                        Spacer(modifier = Modifier.height(20.dp))
 
-                        // Quick-Action Row: Smart Fastest Node + Verify Exit IP / Audit Node
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Button(
-                                onClick = onConnectSmartFastest,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp)
-                                    .testTag("smart_fastest_button"),
-                                shape = RoundedCornerShape(14.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (isConnected) {
-                                        MaterialTheme.colorScheme.secondaryContainer
-                                    } else {
-                                        MaterialTheme.colorScheme.primaryContainer
-                                    },
-                                    contentColor = if (isConnected) {
-                                        MaterialTheme.colorScheme.onSecondaryContainer
-                                    } else {
-                                        MaterialTheme.colorScheme.onPrimaryContainer
-                                    }
-                                ),
-                                elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Bolt,
-                                    contentDescription = "Fastest node",
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = if (isConnected) "Switch Fastest Live" else "Quick Fastest Node",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-
-                            OutlinedButton(
-                                onClick = {
-                                    if (isConnected) onVerifyExitIp() else onInspectConfig(activeNode)
+                        // Clean Full-Width Smart Auto-Connect Button
+                        Button(
+                            onClick = onConnectSmartFastest,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp)
+                                .testTag("smart_fastest_button"),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isConnected) {
+                                    MaterialTheme.colorScheme.secondaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.primary
                                 },
-                                modifier = Modifier
-                                    .height(48.dp)
-                                    .testTag("inspect_active_config_button"),
-                                shape = RoundedCornerShape(14.dp),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.VerifiedUser,
-                                    contentDescription = "Verify Exit IP or Audit",
-                                    modifier = Modifier.size(18.dp),
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = if (isConnected) "Verify Exit IP" else "Audit Node",
-                                    style = MaterialTheme.typography.labelLarge
-                                )
-                            }
+                                contentColor = if (isConnected) {
+                                    MaterialTheme.colorScheme.onSecondaryContainer
+                                } else {
+                                    Color.White
+                                }
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Bolt,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (isConnected) "Switch to Fastest Server" else "Auto-Connect Best Server",
+                                style = MaterialTheme.typography.titleMedium
+                            )
                         }
                     }
                 }
             }
         }
 
-        // 2. Currently Selected Free Node Selector Card
+        // 2. Selected Location Selector Card (Clean Consumer Design)
         item {
-            SelectedNodeCard(
+            SelectedCountryCard(
                 node = activeNode,
-                isPinging = uiState.singlePingingNodeId == activeNode.id,
-                totalAvailableNodes = uiState.allNodes.size,
-                onOpenNodeList = onOpenNodeSelector,
-                onPingNode = { onPingSelectedNode(activeNode) }
+                isAutoMode = uiState.isAutoFastestMode,
+                onOpenNodeList = onOpenNodeSelector
             )
         }
 
-        // 3. Live Encrypted Throughput & Session Telemetry Strip
+        // 3. Simple Download & Upload Speed Cards
         item {
-            LiveTelemetryGrid(
-                isConnected = isConnected,
-                downRateKbps = uiState.telemetry.downloadRateKbps,
-                upRateKbps = uiState.telemetry.uploadRateKbps,
-                totalDownBytes = uiState.telemetry.bytesDownloaded,
-                totalUpBytes = uiState.telemetry.bytesUploaded,
-                dnsServer = uiState.preferences.dnsServer,
-                mtu = uiState.telemetry.activeMtu,
-                packetsCount = uiState.telemetry.packetsProcessed
-            )
-        }
-
-        // 4. Lightweight Protocol & Encryption Selector Card
-        item {
-            Card(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .widthIn(max = 600.dp),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                ),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                    .widthIn(max = 560.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.Shield,
-                                contentDescription = "Encryption protocol",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Tunnel Encapsulation & Cipher",
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                        }
-                        Text(
-                            text = "Open-Source Core",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    Text(
-                        text = uiState.preferences.preferredProtocol.cipherDescription,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        VpnProtocol.entries.forEach { proto ->
-                            val selected = uiState.preferences.preferredProtocol == proto
-                            FilterChip(
-                                selected = selected,
-                                onClick = { onSelectProtocol(proto) },
-                                label = {
-                                    Text(
-                                        text = proto.shortName,
-                                        style = MaterialTheme.typography.labelLarge
-                                    )
-                                },
-                                leadingIcon = if (selected) {
-                                    {
-                                        Icon(
-                                            imageVector = Icons.Default.CheckCircle,
-                                            contentDescription = "Selected protocol",
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
-                                } else null,
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
-                                ),
-                                modifier = Modifier.testTag("protocol_chip_${proto.name.lowercase(Locale.US)}")
-                            )
-                        }
-                    }
-                }
+                TelemetryStatCard(
+                    title = "DOWNLOAD",
+                    primaryValue = if (isConnected) String.format(Locale.US, "%.1f kbps", uiState.telemetry.downloadRateKbps) else "0.0 kbps",
+                    secondaryValue = formatBytesReadable(uiState.telemetry.bytesDownloaded),
+                    icon = Icons.Default.Download,
+                    accentColor = SkyBluePrimary,
+                    modifier = Modifier.weight(1f)
+                )
+                TelemetryStatCard(
+                    title = "UPLOAD",
+                    primaryValue = if (isConnected) String.format(Locale.US, "%.1f kbps", uiState.telemetry.uploadRateKbps) else "0.0 kbps",
+                    secondaryValue = formatBytesReadable(uiState.telemetry.bytesUploaded),
+                    icon = Icons.Default.Upload,
+                    accentColor = EmeraldConnected,
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
     }
@@ -473,7 +315,6 @@ fun ConnectScreen(
 @Composable
 private fun StatusPillBadge(
     status: TunnelConnectionStatus,
-    exitIp: String,
     exitCountry: String
 ) {
     val containerColor by animateColorAsState(
@@ -500,7 +341,7 @@ private fun StatusPillBadge(
         modifier = Modifier.testTag("connection_status_badge")
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
@@ -509,18 +350,18 @@ private fun StatusPillBadge(
                     TunnelConnectionStatus.CONNECTING -> Icons.Default.Sync
                     else -> Icons.Default.LockOpen
                 },
-                contentDescription = "Tunnel lock state",
+                contentDescription = null,
                 tint = contentColor,
                 modifier = Modifier.size(15.dp)
             )
             Spacer(modifier = Modifier.width(6.dp))
             Text(
                 text = when (status) {
-                    TunnelConnectionStatus.CONNECTED -> "EXIT IP: $exitIp • ${exitCountry.uppercase(Locale.US)}"
-                    TunnelConnectionStatus.CONNECTING -> "VERIFYING HTTPS-443 TUNNEL…"
-                    TunnelConnectionStatus.DISCONNECTING -> "CLOSING TUNNEL…"
-                    TunnelConnectionStatus.ERROR -> "CONNECTION INTERRUPTED"
-                    TunnelConnectionStatus.DISCONNECTED -> "UNPROTECTED • READY TO CONNECT"
+                    TunnelConnectionStatus.CONNECTED -> "PROTECTED • ${exitCountry.uppercase(Locale.US)}"
+                    TunnelConnectionStatus.CONNECTING -> "CONNECTING…"
+                    TunnelConnectionStatus.DISCONNECTING -> "DISCONNECTING…"
+                    TunnelConnectionStatus.ERROR -> "DISCONNECTED"
+                    TunnelConnectionStatus.DISCONNECTED -> "NOT CONNECTED"
                 },
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                 color = contentColor
@@ -569,7 +410,7 @@ private fun OneTapConnectOrb(
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .size(176.dp)
+            .size(172.dp)
             .scale(orbScale)
     ) {
         Canvas(
@@ -597,7 +438,7 @@ private fun OneTapConnectOrb(
             ),
             shadowElevation = if (isConnected) 10.dp else 4.dp,
             modifier = Modifier
-                .size(134.dp)
+                .size(132.dp)
                 .clip(CircleShape)
                 .clickable(onClick = onClick)
                 .semantics {
@@ -619,9 +460,9 @@ private fun OneTapConnectOrb(
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     text = when (status) {
-                        TunnelConnectionStatus.CONNECTED -> "ACTIVE"
+                        TunnelConnectionStatus.CONNECTED -> "STOP"
                         TunnelConnectionStatus.CONNECTING -> "WAIT…"
-                        else -> "CONNECT"
+                        else -> "START"
                     },
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontWeight = FontWeight.Bold,
@@ -635,17 +476,15 @@ private fun OneTapConnectOrb(
 }
 
 @Composable
-private fun SelectedNodeCard(
+private fun SelectedCountryCard(
     node: VpnNode,
-    isPinging: Boolean,
-    totalAvailableNodes: Int,
-    onOpenNodeList: () -> Unit,
-    onPingNode: () -> Unit
+    isAutoMode: Boolean,
+    onOpenNodeList: () -> Unit
 ) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .widthIn(max = 600.dp)
+            .widthIn(max = 560.dp)
             .clickable(onClick = onOpenNodeList)
             .testTag("selected_node_card"),
         shape = RoundedCornerShape(22.dp),
@@ -655,234 +494,69 @@ private fun SelectedNodeCard(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(18.dp)
+                .padding(horizontal = 18.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.size(50.dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Public,
-                        contentDescription = "Selected worldwide relay",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
+                Box(contentAlignment = Alignment.Center) {
                     Text(
-                        text = "SELECTED FREE WORLDWIDE NODE",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = node.flagEmoji,
+                        fontSize = 26.sp
                     )
                 }
+            }
 
+            Spacer(modifier = Modifier.width(14.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "$totalAvailableNodes Free Nodes →",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    modifier = Modifier.size(52.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            text = node.flagEmoji,
-                            fontSize = 26.sp
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.width(14.dp))
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "${node.cityName}, ${node.countryName}",
-                            style = MaterialTheme.typography.titleLarge,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "${node.ipAddress}:${node.port} • ${node.relayType.badgeLabel}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                IconButton(
-                    onClick = onPingNode,
-                    modifier = Modifier.testTag("ping_selected_node_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Speed,
-                        contentDescription = "Measure latency to selected node",
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
-
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
-                    contentDescription = "Change server location",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                AssistChip(
-                    onClick = onPingNode,
-                    label = {
-                        Text(
-                            text = if (isPinging) "Verifying…" else "${node.pingMs} ms (${node.latencyQualityLabel})",
-                            style = MaterialTheme.typography.labelSmall
-                        )
+                    text = if (isAutoMode) {
+                        "Auto Best • ${node.countryName}"
+                    } else {
+                        node.countryName
                     },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Default.GraphicEq,
-                            contentDescription = "Ping latency",
-                            modifier = Modifier.size(15.dp),
-                            tint = latencyColor(node.pingMs)
-                        )
-                    },
-                    colors = AssistChipDefaults.assistChipColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
-                    ),
-                    border = null
+                    style = MaterialTheme.typography.titleLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
-
-                if (node.isVerifiedWorking) {
-                    AssistChip(
-                        onClick = onOpenNodeList,
-                        label = {
-                            Text(
-                                text = "Verified HTTPS-443",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = EmeraldConnected
-                            )
-                        },
-                        border = null,
-                        colors = AssistChipDefaults.assistChipColors(
-                            containerColor = EmeraldConnected.copy(alpha = 0.12f)
-                        )
-                    )
-                } else if (node.isLiveFromPublicApi) {
-                    AssistChip(
-                        onClick = onOpenNodeList,
-                        label = {
-                            Text(
-                                text = "Live API",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = SkyBluePrimary
-                            )
-                        },
-                        border = null,
-                        colors = AssistChipDefaults.assistChipColors(
-                            containerColor = SkyBluePrimary.copy(alpha = 0.12f)
-                        )
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun LiveTelemetryGrid(
-    isConnected: Boolean,
-    downRateKbps: Double,
-    upRateKbps: Double,
-    totalDownBytes: Long,
-    totalUpBytes: Long,
-    dnsServer: String,
-    mtu: Int,
-    packetsCount: Long
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .widthIn(max = 600.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            TelemetryStatCard(
-                title = "DOWNLOAD",
-                primaryValue = if (isConnected) String.format(Locale.US, "%.1f kbps", downRateKbps) else "0.0 kbps",
-                secondaryValue = "Total: ${formatBytesReadable(totalDownBytes)}",
-                icon = Icons.Default.Download,
-                accentColor = SkyBluePrimary,
-                modifier = Modifier.weight(1f)
-            )
-            TelemetryStatCard(
-                title = "UPLOAD",
-                primaryValue = if (isConnected) String.format(Locale.US, "%.1f kbps", upRateKbps) else "0.0 kbps",
-                secondaryValue = "Total: ${formatBytesReadable(totalUpBytes)}",
-                icon = Icons.Default.Upload,
-                accentColor = EmeraldConnected,
-                modifier = Modifier.weight(1f)
-            )
-        }
-
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 11.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Dns,
-                        contentDescription = "DNS Resolver",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Remote DNS ($dnsServer) • MTU $mtu",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = if (isConnected) "$packetsCount streams framed" else "Full Route 0.0.0.0/0 Ready",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    text = "${node.pingMs} ms • ${node.latencyQualityLabel}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = latencyColor(node.pingMs),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
+            }
+
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.primaryContainer
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Change",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
+                        contentDescription = "Change country",
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(12.dp)
+                    )
+                }
             }
         }
     }
@@ -906,7 +580,7 @@ private fun TelemetryStatCard(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(
                     shape = CircleShape,

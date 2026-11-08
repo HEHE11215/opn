@@ -322,6 +322,12 @@ fun AetherNodeApp(
                         onSearchQueryChange = viewModel::updateSearchQuery,
                         onSelectRegion = viewModel::selectRegion,
                         onSelectSortOption = viewModel::selectSortOption,
+                        onSelectAutoFastest = {
+                            val fastest = viewModel.selectFastestNodeAndGet()
+                            viewModel.enableAutoFastestMode(context, connectImmediately = false)
+                            viewModel.selectTab(AetherTab.CONNECT)
+                            initiateVpnConnect(fastest)
+                        },
                         onSelectAndConnectNode = { node ->
                             viewModel.selectNode(node)
                             viewModel.selectTab(AetherTab.CONNECT)

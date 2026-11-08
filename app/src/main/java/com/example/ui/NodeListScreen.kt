@@ -24,13 +24,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.Button
@@ -43,7 +42,6 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -54,12 +52,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.R
 import com.example.model.NodeSortOption
 import com.example.model.VpnNode
 import com.example.model.VpnRegion
@@ -70,9 +66,10 @@ import com.example.ui.theme.SkyBluePrimary
 import java.util.Locale
 
 /**
- * Worldwide Free VPN Nodes Browser Screen.
- * Supports searching by country/city/IP/operator, filtering by global region or favorites,
- * sorting by latency/speed/uptime, live VPN Gate API syncing, and concurrent TCP latency sweeps.
+ * Clean, Consumer-Optimized Locations Screen:
+ * - Shows strictly ONE entry per Country (auto-selecting the fastest server for each country).
+ * - Includes a featured "⚡ Auto Fastest Server" card at the top.
+ * - Clean single-line Sort & Filter controls with zero text wrapping or squished buttons.
  */
 @Composable
 fun NodeListScreen(
@@ -80,6 +77,7 @@ fun NodeListScreen(
     onSearchQueryChange: (String) -> Unit,
     onSelectRegion: (VpnRegion) -> Unit,
     onSelectSortOption: (NodeSortOption) -> Unit,
+    onSelectAutoFastest: () -> Unit,
     onSelectAndConnectNode: (VpnNode) -> Unit,
     onToggleFavorite: (String) -> Unit,
     onPingSingleNode: (VpnNode) -> Unit,
@@ -92,150 +90,114 @@ fun NodeListScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 18.dp),
+            .padding(horizontal = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .widthIn(max = 640.dp)
+                .widthIn(max = 600.dp)
         ) {
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
-            // Search Field
-            OutlinedTextField(
-                value = uiState.searchQuery,
-                onValueChange = onSearchQueryChange,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("node_search_input"),
-                placeholder = {
-                    Text(
-                        text = stringResource(R.string.search_nodes_hint),
-                        style = MaterialTheme.typography.bodyMedium
+            // 1. Search Bar + Refresh & Add Action Buttons in One Clean Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = uiState.searchQuery,
+                    onValueChange = onSearchQueryChange,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("node_search_input"),
+                    placeholder = {
+                        Text(
+                            text = "Search country…",
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = "Search country"
+                        )
+                    },
+                    trailingIcon = if (uiState.searchQuery.isNotEmpty()) {
+                        {
+                            IconButton(
+                                onClick = { onSearchQueryChange("") },
+                                modifier = Modifier.testTag("clear_search_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Clear,
+                                    contentDescription = "Clear search"
+                                )
+                            }
+                        }
+                    } else null,
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surface,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline
                     )
-                },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Default.Search,
-                        contentDescription = "Search worldwide nodes"
-                    )
-                },
-                trailingIcon = if (uiState.searchQuery.isNotEmpty()) {
-                    {
-                        IconButton(
-                            onClick = { onSearchQueryChange("") },
-                            modifier = Modifier.testTag("clear_search_button")
-                        ) {
+                )
+
+                // Auto-Refresh Live Servers Button
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                    modifier = Modifier.size(52.dp)
+                ) {
+                    IconButton(
+                        onClick = onSyncPublicApi,
+                        enabled = !uiState.isSyncingApi,
+                        modifier = Modifier.testTag("refresh_nodes_button")
+                    ) {
+                        if (uiState.isSyncingApi) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
                             Icon(
-                                imageVector = Icons.Default.Clear,
-                                contentDescription = "Clear search"
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Refresh fastest servers",
+                                tint = MaterialTheme.colorScheme.primary
                             )
                         }
                     }
-                } else null,
-                singleLine = true,
-                shape = RoundedCornerShape(16.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = MaterialTheme.colorScheme.surface,
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outline
-                )
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Action Strip: Sync Public Relay API, Ping All, Add Custom Node
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedButton(
-                    onClick = onSyncPublicApi,
-                    enabled = !uiState.isSyncingApi,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(44.dp)
-                        .testTag("refresh_nodes_button"),
-                    shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(horizontal = 10.dp)
-                ) {
-                    if (uiState.isSyncingApi) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(15.dp),
-                            strokeWidth = 2.dp
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "Sync Public Relay API",
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = if (uiState.isSyncingApi) "Syncing…" else "Sync API",
-                        style = MaterialTheme.typography.labelLarge,
-                        maxLines = 1
-                    )
                 }
 
-                OutlinedButton(
-                    onClick = onPingAllNodes,
-                    enabled = !uiState.isPingingNodes,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(44.dp)
-                        .testTag("ping_all_button"),
-                    shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(horizontal = 10.dp)
+                // Add Custom Server Button
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    modifier = Modifier.size(52.dp)
                 ) {
-                    if (uiState.isPingingNodes) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(15.dp),
-                            strokeWidth = 2.dp
-                        )
-                    } else {
+                    IconButton(
+                        onClick = onOpenAddCustomModal,
+                        modifier = Modifier.testTag("add_custom_node_button")
+                    ) {
                         Icon(
-                            imageVector = Icons.Default.Speed,
-                            contentDescription = "Ping all nodes",
-                            modifier = Modifier.size(16.dp)
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Add custom server",
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer
                         )
                     }
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = if (uiState.isPingingNodes) "Pinging…" else "Ping All",
-                        style = MaterialTheme.typography.labelLarge,
-                        maxLines = 1
-                    )
-                }
-
-                Button(
-                    onClick = onOpenAddCustomModal,
-                    modifier = Modifier
-                        .height(44.dp)
-                        .testTag("add_custom_node_button"),
-                    shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Add custom community node",
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "Custom",
-                        style = MaterialTheme.typography.labelLarge
-                    )
                 }
             }
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Region Filter Chips
+            // 2. Single-Line Region Filter Chips
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -250,7 +212,8 @@ fun NodeListScreen(
                         label = {
                             Text(
                                 text = region.displayName,
-                                style = MaterialTheme.typography.labelLarge
+                                style = MaterialTheme.typography.labelLarge,
+                                maxLines = 1
                             )
                         },
                         colors = FilterChipDefaults.filterChipColors(
@@ -262,107 +225,113 @@ fun NodeListScreen(
                 }
             }
 
-            // Sort Bar + Node Count Summary
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // 3. Clean Single-Line Sort Order Bar (Never wraps!)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                    .horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    text = "${uiState.filteredNodes.size} Free Public Relays",
+                    text = "Sort:",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    NodeSortOption.entries.forEach { sortOpt ->
-                        val active = uiState.sortOption == sortOpt
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
+                NodeSortOption.entries.forEach { sortOpt ->
+                    val active = uiState.sortOption == sortOpt
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (active) {
+                            MaterialTheme.colorScheme.secondaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
+                        },
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { onSelectSortOption(sortOpt) }
+                            .testTag("sort_chip_${sortOpt.name.lowercase(Locale.US)}")
+                    ) {
+                        Text(
+                            text = sortOpt.label,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = if (active) FontWeight.Bold else FontWeight.Medium
+                            ),
                             color = if (active) {
-                                MaterialTheme.colorScheme.secondaryContainer
+                                MaterialTheme.colorScheme.onSecondaryContainer
                             } else {
-                                Color.Transparent
+                                MaterialTheme.colorScheme.onSurfaceVariant
                             },
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { onSelectSortOption(sortOpt) }
-                                .testTag("sort_chip_${sortOpt.name.lowercase(Locale.US)}")
-                        ) {
+                            maxLines = 1,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
+        // 4. Country List (Featured Auto-Fastest Card + 1 Card Per Country)
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .widthIn(max = 600.dp)
+                .testTag("worldwide_node_lazy_list"),
+            contentPadding = PaddingValues(vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // Featured "Auto Fastest Server" Card at top
+            item(key = "auto_fastest_header_card") {
+                AutoFastestLocationCard(
+                    isSelected = uiState.isAutoFastestMode,
+                    fastestNode = uiState.filteredNodes.firstOrNull() ?: uiState.selectedNode,
+                    onClick = onSelectAutoFastest
+                )
+            }
+
+            if (uiState.filteredNodes.isEmpty()) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(36.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                imageVector = Icons.Default.Public,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(42.dp)
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
                             Text(
-                                text = sortOpt.label,
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = if (active) FontWeight.Bold else FontWeight.Medium
-                                ),
-                                color = if (active) {
-                                    MaterialTheme.colorScheme.onSecondaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                text = "No matching countries found",
+                                style = MaterialTheme.typography.titleMedium
                             )
                         }
                     }
                 }
-            }
-        }
-
-        // Node Cards List or Empty State
-        if (uiState.filteredNodes.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(32.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        imageVector = Icons.Default.Public,
-                        contentDescription = "No matching nodes",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(48.dp)
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = "No free relay nodes match this filter",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Try switching region to 'All Worldwide' or clearing your search query.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .widthIn(max = 640.dp)
-                    .testTag("worldwide_node_lazy_list"),
-                contentPadding = PaddingValues(vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
+            } else {
                 items(
                     items = uiState.filteredNodes,
-                    key = { it.id }
+                    key = { it.countryCode + "_" + it.id }
                 ) { node ->
-                    val isSelected = uiState.selectedNode.id == node.id
-                    val isFavorite = uiState.preferences.favoriteNodeIds.contains(node.id)
-                    val isPingingThis = uiState.singlePingingNodeId == node.id
+                    val isSelected = !uiState.isAutoFastestMode &&
+                        (uiState.selectedNode.countryCode == node.countryCode)
+                    val isFavorite = uiState.preferences.favoriteNodeIds.contains(node.countryCode) ||
+                        uiState.preferences.favoriteNodeIds.contains(node.id)
 
-                    WorldwideNodeItemCard(
+                    CountryServerRowCard(
                         node = node,
                         isSelected = isSelected,
                         isFavorite = isFavorite,
-                        isPinging = isPingingThis,
                         onSelectNode = { onSelectAndConnectNode(node) },
-                        onToggleFavorite = { onToggleFavorite(node.id) },
-                        onPingNode = { onPingSingleNode(node) },
-                        onInspectConfig = { onInspectNodeConfig(node) }
+                        onToggleFavorite = { onToggleFavorite(node.countryCode) }
                     )
                 }
             }
@@ -371,15 +340,98 @@ fun NodeListScreen(
 }
 
 @Composable
-private fun WorldwideNodeItemCard(
+private fun AutoFastestLocationCard(
+    isSelected: Boolean,
+    fastestNode: VpnNode,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .testTag("auto_fastest_location_card"),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isSelected) {
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+            } else {
+                MaterialTheme.colorScheme.surface
+            }
+        ),
+        border = BorderStroke(
+            width = if (isSelected) 1.5.dp else 1.dp,
+            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = SkyBluePrimary.copy(alpha = 0.14f),
+                modifier = Modifier.size(46.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.Bolt,
+                        contentDescription = null,
+                        tint = SkyBluePrimary,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(14.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Auto Fastest Server",
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "Best speed (${fastestNode.flagEmoji} ${fastestNode.countryName} • ${fastestNode.pingMs} ms)",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = EmeraldConnected,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Spacer(modifier = Modifier.width(10.dp))
+
+            Button(
+                onClick = onClick,
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isSelected) EmeraldConnected else MaterialTheme.colorScheme.primary
+                ),
+                modifier = Modifier.height(38.dp)
+            ) {
+                Text(
+                    text = if (isSelected) "Active" else "Auto",
+                    style = MaterialTheme.typography.labelLarge.copy(color = Color.White),
+                    maxLines = 1
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CountryServerRowCard(
     node: VpnNode,
     isSelected: Boolean,
     isFavorite: Boolean,
-    isPinging: Boolean,
     onSelectNode: () -> Unit,
-    onToggleFavorite: () -> Unit,
-    onPingNode: () -> Unit,
-    onInspectConfig: () -> Unit
+    onToggleFavorite: () -> Unit
 ) {
     Card(
         modifier = Modifier
@@ -404,234 +456,112 @@ private fun WorldwideNodeItemCard(
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+            // 1. Country Flag Box
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.size(46.dp)
             ) {
-                // Country Flag Box
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    modifier = Modifier.size(46.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            text = node.flagEmoji,
-                            fontSize = 24.sp
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Text(
-                            text = "${node.cityName}, ${node.countryName}",
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (node.isVerifiedWorking) {
-                            Surface(
-                                shape = RoundedCornerShape(6.dp),
-                                color = EmeraldConnected.copy(alpha = 0.16f)
-                            ) {
-                                Text(
-                                    text = "VERIFIED 443",
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.Bold
-                                    ),
-                                    color = EmeraldConnected,
-                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
-                                )
-                            }
-                        } else if (node.isLiveFromPublicApi) {
-                            Surface(
-                                shape = RoundedCornerShape(6.dp),
-                                color = SkyBluePrimary.copy(alpha = 0.14f)
-                            ) {
-                                Text(
-                                    text = "LIVE",
-                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                                    color = SkyBluePrimary,
-                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
-                                )
-                            }
-                        } else if (node.isCustomNode) {
-                            Surface(
-                                shape = RoundedCornerShape(6.dp),
-                                color = SkyBluePrimary.copy(alpha = 0.14f)
-                            ) {
-                                Text(
-                                    text = "CUSTOM",
-                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                                    color = SkyBluePrimary,
-                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(2.dp))
-
+                Box(contentAlignment = Alignment.Center) {
                     Text(
-                        text = "${node.ipAddress}:${node.port} • ${node.operatorName}",
-                        style = MaterialTheme.typography.labelSmall,
+                        text = node.flagEmoji,
+                        fontSize = 24.sp
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            // 2. Country Name + Speed & Ping Subtitle
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = node.countryName,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                Spacer(modifier = Modifier.height(3.dp))
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    SignalStrengthIndicator(
+                        bars = node.signalBars,
+                        color = latencyColor(node.pingMs)
+                    )
+                    Text(
+                        text = "${node.pingMs} ms",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = latencyColor(node.pingMs),
+                        maxLines = 1
+                    )
+                    Text(
+                        text = "• ${node.cityName}",
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-
-                // Signal Bars + Ping Badge
-                Column(horizontalAlignment = Alignment.End) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        SignalStrengthIndicator(
-                            bars = node.signalBars,
-                            color = latencyColor(node.pingMs)
-                        )
-                        Text(
-                            text = if (isPinging) "…" else "${node.pingMs} ms",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontFamily = JetBrainsMonoFontFamily,
-                                fontWeight = FontWeight.Bold
-                            ),
-                            color = latencyColor(node.pingMs)
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "${node.downloadSpeedMbps} Mbps",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                // Favorite Star Button
-                IconButton(
-                    onClick = onToggleFavorite,
-                    modifier = Modifier.testTag("fav_button_${node.id}")
-                ) {
-                    Icon(
-                        imageVector = if (isFavorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
-                        contentDescription = if (isFavorite) "Remove from favorites" else "Star node",
-                        tint = if (isFavorite) AmberHandshaking else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Bottom Row: Metadata & Quick Actions (Test Ping, Inspect .ovpn, Use Node)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            // 3. Star Icon Button
+            IconButton(
+                onClick = onToggleFavorite,
+                modifier = Modifier
+                    .size(40.dp)
+                    .testTag("fav_button_${node.id}")
             ) {
-                Text(
-                    text = "${node.activeSessions} peers • ${node.uptimeHours}h uptime",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                Icon(
+                    imageVector = if (isFavorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                    contentDescription = if (isFavorite) "Unstar country" else "Star country",
+                    tint = if (isFavorite) AmberHandshaking else MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
 
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable(onClick = onPingNode)
-                            .testTag("ping_node_btn_${node.id}")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Speed,
-                                contentDescription = "Ping node",
-                                modifier = Modifier.size(13.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "Ping",
-                                style = MaterialTheme.typography.labelSmall
-                            )
-                        }
-                    }
+            Spacer(modifier = Modifier.width(4.dp))
 
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable(onClick = onInspectConfig)
-                            .testTag("inspect_node_btn_${node.id}")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Code,
-                                contentDescription = "Inspect OpenVPN configuration",
-                                modifier = Modifier.size(13.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = ".ovpn",
-                                style = MaterialTheme.typography.labelSmall
-                            )
-                        }
-                    }
-
-                    Button(
-                        onClick = onSelectNode,
-                        shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isSelected) EmeraldConnected else MaterialTheme.colorScheme.primary
-                        ),
-                        modifier = Modifier
-                            .height(32.dp)
-                            .testTag("select_node_${node.id}")
-                    ) {
-                        if (isSelected) {
-                            Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = "Selected",
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "Selected",
-                                style = MaterialTheme.typography.labelSmall.copy(color = Color.White)
-                            )
-                        } else {
-                            Text(
-                                text = "Use Node",
-                                style = MaterialTheme.typography.labelSmall.copy(color = Color.White)
-                            )
-                        }
-                    }
+            // 4. Clean, Well-Proportioned Connect Button (Never squished!)
+            Button(
+                onClick = onSelectNode,
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isSelected) EmeraldConnected else MaterialTheme.colorScheme.primary
+                ),
+                modifier = Modifier
+                    .height(38.dp)
+                    .testTag("select_node_${node.id}")
+            ) {
+                if (isSelected) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = null,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Active",
+                        style = MaterialTheme.typography.labelLarge.copy(color = Color.White),
+                        maxLines = 1
+                    )
+                } else {
+                    Text(
+                        text = "Connect",
+                        style = MaterialTheme.typography.labelLarge.copy(color = Color.White),
+                        maxLines = 1
+                    )
                 }
             }
         }
@@ -646,11 +576,11 @@ private fun SignalStrengthIndicator(
     Row(
         verticalAlignment = Alignment.Bottom,
         horizontalArrangement = Arrangement.spacedBy(2.dp),
-        modifier = Modifier.height(14.dp)
+        modifier = Modifier.height(13.dp)
     ) {
         for (i in 1..4) {
             val active = i <= bars
-            val barHeight = (4 + (i * 2.5)).dp
+            val barHeight = (4 + (i * 2.2)).dp
             Box(
                 modifier = Modifier
                     .width(3.dp)

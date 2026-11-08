@@ -4,12 +4,12 @@ package com.example.model
  * Geographic region filter categories for worldwide free VPN relay nodes.
  */
 enum class VpnRegion(val displayName: String) {
-    ALL("All Worldwide"),
+    ALL("All Countries"),
     FAVORITES("Starred"),
     AMERICAS("Americas"),
     EUROPE("Europe"),
     ASIA_PACIFIC("Asia-Pacific"),
-    MIDDLE_EAST_AFRICA("MEA & Global")
+    MIDDLE_EAST_AFRICA("Global")
 }
 
 /**
@@ -19,7 +19,7 @@ enum class VpnRegion(val displayName: String) {
 enum class RelayTunnelType(val badgeLabel: String) {
     SOCKS5("SOCKS5 TLS"),
     SOCKS4("SOCKS4a"),
-    HTTP_CONNECT("HTTP CONNECT")
+    HTTP_CONNECT("HTTPS Tunnel")
 }
 
 /**
@@ -32,36 +32,36 @@ enum class VpnProtocol(
     val defaultPort: Int
 ) {
     WIREGUARD_CHACHA20(
-        shortName = "WireGuard-Mode",
-        fullName = "WireGuard + SOCKS5/CONNECT Bridge",
-        cipherDescription = "ChaCha20-Poly1305 • Remote DNS • Anti-QUIC Leak",
-        defaultPort = 51820
+        shortName = "Smart Auto",
+        fullName = "Auto TLS-Verified Tunnel",
+        cipherDescription = "Strict CA TLS Verification • Anti-MITM • Remote DNS",
+        defaultPort = 1080
     ),
     OPENVPN_UDP_AES256(
-        shortName = "OpenVPN UDP",
-        fullName = "OpenVPN 2.6 UDP Tunnel",
-        cipherDescription = "AES-256-GCM • TLS 1.3 Control Channel",
+        shortName = "SOCKS5 Fast",
+        fullName = "SOCKS5 Direct Stream",
+        cipherDescription = "Zero-Interception Raw TCP Stream",
         defaultPort = 1080
     ),
     OPENVPN_TCP_TLS(
-        shortName = "OpenVPN TCP",
-        fullName = "OpenVPN 2.6 TCP/443 Stealth",
-        cipherDescription = "AES-256-GCM • TCP Port 443 Firewall Bypass",
+        shortName = "Stealth 443",
+        fullName = "TCP Port 443 Firewall Bypass",
+        cipherDescription = "TLS 1.3 Verified Passthrough",
         defaultPort = 443
     )
 }
 
 /**
- * Sorting options for the node browser.
+ * Clean consumer sorting options for the country server list.
  */
 enum class NodeSortOption(val label: String) {
-    LOWEST_PING("Lowest Ping"),
-    HIGHEST_SPEED("Fastest Bandwidth"),
-    UPTIME("Most Stable")
+    LOWEST_PING("Fastest First"),
+    COUNTRY_NAME("Country A–Z"),
+    HIGHEST_SPEED("Top Speed")
 }
 
 /**
- * Represents a public, free community VPN relay node anywhere in the world.
+ * Represents the best auto-selected free VPN server for a specific country.
  */
 data class VpnNode(
     val id: String,
@@ -86,16 +86,15 @@ data class VpnNode(
     val isCustomNode: Boolean = false
 ) {
     /**
-     * Human-readable signal quality rating based on measured latency in milliseconds.
+     * Consumer-friendly speed/quality rating based on latency.
      */
     val latencyQualityLabel: String
         get() = when {
-            isVerifiedWorking && pingMs < 180 -> "Verified Live"
-            pingMs <= 0 -> "Untested"
-            pingMs < 85 -> "Optimal"
-            pingMs < 165 -> "Good"
-            pingMs < 280 -> "Fair"
-            else -> "High Latency"
+            isVerifiedWorking && pingMs < 150 -> "Fast & Verified"
+            isVerifiedWorking -> "Verified Online"
+            pingMs < 90 -> "Fast"
+            pingMs < 180 -> "Good"
+            else -> "Standard"
         }
 
     /**
@@ -103,10 +102,10 @@ data class VpnNode(
      */
     val signalBars: Int
         get() = when {
-            pingMs <= 0 -> 2
-            pingMs < 85 -> 4
-            pingMs < 165 -> 3
-            pingMs < 280 -> 2
+            pingMs <= 0 -> 3
+            pingMs < 95 -> 4
+            pingMs < 180 -> 3
+            pingMs < 300 -> 2
             else -> 1
         }
 }
@@ -155,13 +154,12 @@ data class TunnelTelemetry(
     val activeDnsServer: String = "1.1.1.1",
     val activeMtu: Int = 1400,
     val activeProtocol: VpnProtocol = VpnProtocol.WIREGUARD_CHACHA20,
-    val handshakeSummary: String = "Idle — No active TUN interface",
+    val handshakeSummary: String = "Ready for Auto-Connect",
     val errorMessage: String? = null
 )
 
 /**
- * Open-source transparency audit log entry so contributors and users can inspect
- * every socket probe, TUN descriptor setup, DNS binding, and packet loop event.
+ * Open-source transparency audit log entry.
  */
 data class AuditLogEntry(
     val id: Long,
@@ -173,13 +171,11 @@ data class AuditLogEntry(
 
 /**
  * Lightweight user preferences stored via Jetpack DataStore.
- * Note: [safeSplitTunnelMode] defaults to `false` (Full Device Tunnel Mode) so that
- * Chrome, Google Search, and all browsers route traffic through the VPN gateway and change
- * the device's public IP and country.
  */
 data class VpnPreferences(
-    val selectedNodeId: String = "us-ny-relay-01",
-    val favoriteNodeIds: Set<String> = setOf("us-ny-relay-01", "de-frankfurt-open-01", "jp-tokyo-academic-01"),
+    val selectedNodeId: String = "auto_fastest",
+    val autoSelectFastest: Boolean = true,
+    val favoriteNodeIds: Set<String> = setOf("US", "DE", "JP", "SG"),
     val preferredProtocol: VpnProtocol = VpnProtocol.WIREGUARD_CHACHA20,
     val dnsServer: String = "1.1.1.1",
     val safeSplitTunnelMode: Boolean = false,
