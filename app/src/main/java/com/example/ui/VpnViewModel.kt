@@ -31,16 +31,15 @@ import kotlinx.coroutines.withContext
 import java.util.Locale
 
 /**
- * Navigation tabs for AetherNode.
+ * 2-Tab Consumer Navigation for A VPN (Removed the 3rd "Open Audit" tab as requested).
  */
 enum class AetherTab(val route: String, val label: String) {
     CONNECT("connect_dashboard", "Connect"),
-    NODES("worldwide_nodes", "Locations"),
-    AUDIT("opensource_audit", "Settings")
+    NODES("worldwide_nodes", "Servers")
 }
 
 /**
- * Immutable UI state for the AetherNode VPN application.
+ * Immutable UI state for the A VPN application.
  */
 data class VpnUiState(
     val activeTab: AetherTab = AetherTab.CONNECT,
@@ -72,12 +71,15 @@ private data class FilterBarState(
     val singlePingingNodeId: String? = null,
     val inspectedNode: VpnNode? = null,
     val showAddCustomNodeModal: Boolean = false,
-    val bannerFeedback: String? = null
+    val bannerFeedback: String? = null,
+    val manualSelectedNodeOverride: VpnNode? = null,
+    val isAutoFastestOverride: Boolean? = null
 )
 
 /**
- * Clean MVVM ViewModel orchestrating auto-fetched country servers, strict TLS verification,
- * and one-tap auto-connection.
+ * Clean MVVM ViewModel for A VPN.
+ * Fixes the manual server selection race condition by holding an immediate synchronous
+ * `manualSelectedNodeOverride` so tapping any country connects directly to that country!
  */
 class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -97,11 +99,18 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             ?: nodes.minByOrNull { it.pingMs }
             ?: nodes.first()
 
-        val selected = if (prefs.autoSelectFastest || prefs.selectedNodeId == "auto_fastest") {
-            fastestVerified
-        } else {
-            nodes.firstOrNull { it.id == prefs.selectedNodeId || it.countryCode == prefs.selectedNodeId }
+        val isAutoMode = filter.isAutoFastestOverride
+            ?: (prefs.autoSelectFastest && filter.manualSelectedNodeOverride == null)
+
+        val selected = if (!isAutoMode) {
+            filter.manualSelectedNodeOverride
+                ?: nodes.firstOrNull {
+                    it.id == prefs.selectedNodeId ||
+                        it.countryCode.equals(prefs.selectedNodeId.removePrefix("country-"), ignoreCase = true)
+                }
                 ?: fastestVerified
+        } else {
+            fastestVerified
         }
 
         val query = filter.searchQuery.trim().lowercase(Locale.US)
@@ -134,7 +143,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             allNodes = nodes,
             filteredNodes = filtered,
             selectedNode = selected.copy(protocol = prefs.preferredProtocol),
-            isAutoFastestMode = prefs.autoSelectFastest || prefs.selectedNodeId == "auto_fastest",
+            isAutoFastestMode = isAutoMode,
             telemetry = telemetry,
             auditLogs = logs,
             preferences = prefs,
@@ -179,10 +188,6 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         _filterState.update { it.copy(sortOption = option) }
     }
 
-    fun inspectNodeConfig(node: VpnNode?) {
-        _filterState.update { it.copy(inspectedNode = node) }
-    }
-
     fun setShowAddCustomNodeModal(show: Boolean) {
         _filterState.update { it.copy(showAddCustomNodeModal = show) }
     }
@@ -191,67 +196,49 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         _filterState.update { it.copy(bannerFeedback = null) }
     }
 
-    fun enableAutoFastestMode(context: Context, connectImmediately: Boolean = true) {
+    /**
+     * Switches back to Smart Auto-Fastest Mode and returns the fastest node.
+     */
+    fun enableAutoFastestModeAndGetNode(): VpnNode {
+        val fastest = _nodes.value.filter { it.isVerifiedWorking }.minByOrNull { it.pingMs }
+            ?: _nodes.value.minByOrNull { it.pingMs }
+            ?: uiState.value.selectedNode
+
+        _filterState.update {
+            it.copy(
+                manualSelectedNodeOverride = null,
+                isAutoFastestOverride = true,
+                activeTab = AetherTab.CONNECT,
+                bannerFeedback = "Auto-Connecting fastest server: ${fastest.flagEmoji} ${fastest.countryName}"
+            )
+        }
         viewModelScope.launch {
             repository.setSelectedNode("auto_fastest", isAutoFastest = true)
-            val best = selectFastestNodeAndGet()
-            if (connectImmediately) {
-                startVpnServiceWithNode(context, best)
-                _filterState.update {
-                    it.copy(
-                        activeTab = AetherTab.CONNECT,
-                        bannerFeedback = "Auto-connected to fastest country: ${best.flagEmoji} ${best.countryName}"
-                    )
-                }
-            }
         }
+        return fastest
     }
 
-    fun selectNode(node: VpnNode) {
+    /**
+     * Explicitly selects a country manually and synchronously locks `isAutoFastestOverride = false`
+     * so `startVpnServiceWithNode` connects to this exact country!
+     */
+    fun selectManualNode(node: VpnNode) {
+        _filterState.update {
+            it.copy(
+                manualSelectedNodeOverride = node,
+                isAutoFastestOverride = false,
+                activeTab = AetherTab.CONNECT,
+                bannerFeedback = "Selected ${node.flagEmoji} ${node.countryName}"
+            )
+        }
         viewModelScope.launch {
             repository.setSelectedNode(node.id, isAutoFastest = false)
-            val currentStatus = uiState.value.telemetry.status
-            if (currentStatus == TunnelConnectionStatus.CONNECTED ||
-                currentStatus == TunnelConnectionStatus.CONNECTING
-            ) {
-                startVpnServiceWithNode(getApplication(), node.copy(protocol = uiState.value.preferences.preferredProtocol))
-                _filterState.update {
-                    it.copy(
-                        activeTab = AetherTab.CONNECT,
-                        bannerFeedback = "Connected to ${node.flagEmoji} ${node.countryName}"
-                    )
-                }
-            }
         }
     }
 
     fun toggleFavorite(countryCodeOrId: String) {
         viewModelScope.launch {
             repository.toggleFavoriteCountry(countryCodeOrId)
-        }
-    }
-
-    fun updatePreferredProtocol(protocol: VpnProtocol) {
-        viewModelScope.launch {
-            repository.updateProtocol(protocol)
-        }
-    }
-
-    fun updateDnsServer(dnsServer: String) {
-        viewModelScope.launch {
-            repository.updateDnsServer(dnsServer)
-        }
-    }
-
-    fun updateSafeSplitTunnel(enabled: Boolean) {
-        viewModelScope.launch {
-            repository.updateSafeSplitTunnel(enabled)
-        }
-    }
-
-    fun updateAutoReconnect(enabled: Boolean) {
-        viewModelScope.launch {
-            repository.updateAutoReconnect(enabled)
         }
     }
 
@@ -270,6 +257,17 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 val customNodes = _nodes.value.filter { it.isCustomNode }
                 val combined = repository.deduplicateFastestPerCountry(customNodes + uniqueCountryNodes)
                 _nodes.value = combined
+
+                // If user manually selected a country, refresh its IP/port with the latest fastest server for that country
+                val currentManual = _filterState.value.manualSelectedNodeOverride
+                if (currentManual != null) {
+                    val updatedManual = combined.firstOrNull {
+                        it.countryCode.equals(currentManual.countryCode, ignoreCase = true)
+                    }
+                    if (updatedManual != null) {
+                        _filterState.update { it.copy(manualSelectedNodeOverride = updatedManual) }
+                    }
+                }
 
                 if (!silent) {
                     val best = combined.firstOrNull()
@@ -294,89 +292,6 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             }
             _filterState.update { it.copy(isSyncingApi = false) }
         }
-    }
-
-    fun pingAllNodes() {
-        if (_filterState.value.isPingingNodes) return
-        viewModelScope.launch {
-            _filterState.update { it.copy(isPingingNodes = true) }
-            val updated = repository.pingAllNodesConcurrently(_nodes.value)
-            _nodes.value = updated
-            val fastest = updated.firstOrNull { it.isVerifiedWorking } ?: updated.minByOrNull { it.pingMs }
-            _filterState.update {
-                it.copy(
-                    isPingingNodes = false,
-                    bannerFeedback = fastest?.let { f ->
-                        "Fastest country: ${f.flagEmoji} ${f.countryName} (${f.pingMs} ms)"
-                    }
-                )
-            }
-        }
-    }
-
-    fun pingSingleNode(node: VpnNode) {
-        viewModelScope.launch {
-            _filterState.update { it.copy(singlePingingNodeId = node.id) }
-            val verified = withContext(Dispatchers.IO) {
-                LocalTunnelGateway.verifyNodeHttpsTunnel(node, timeoutMs = 2400)
-            }
-            val newPing = verified?.second ?: repository.measureNodeLatencyMs(node)
-            val isVerified = verified != null
-
-            _nodes.update { list ->
-                list.map { existing ->
-                    if (existing.id == node.id) {
-                        existing.copy(
-                            pingMs = newPing,
-                            relayType = verified?.first ?: existing.relayType,
-                            isVerifiedWorking = isVerified || existing.isVerifiedWorking
-                        )
-                    } else {
-                        existing
-                    }
-                }
-            }
-            _filterState.update {
-                it.copy(
-                    singlePingingNodeId = null,
-                    bannerFeedback = "${node.flagEmoji} ${node.countryName}: $newPing ms"
-                )
-            }
-        }
-    }
-
-    fun verifyCurrentExitIp() {
-        viewModelScope.launch {
-            val telemetry = uiState.value.telemetry
-            val activeNode = telemetry.activeNode ?: uiState.value.selectedNode
-            val port = telemetry.localGatewayPort
-            if (telemetry.status == TunnelConnectionStatus.CONNECTED && port > 0) {
-                _filterState.update { it.copy(bannerFeedback = "Checking location…") }
-                val check = withContext(Dispatchers.IO) {
-                    LocalTunnelGateway.fetchExitIpThroughLocalGateway(port, activeNode)
-                }
-                AetherVpnStateBus.updateTelemetry {
-                    it.copy(
-                        verifiedExitIp = check.publicIp,
-                        verifiedExitCountry = check.countryName,
-                        verifiedExitCity = check.cityName,
-                        verifiedExitIsp = check.ispName
-                    )
-                }
-                _filterState.update {
-                    it.copy(
-                        bannerFeedback = "Connected to ${check.countryName} (${check.publicIp})"
-                    )
-                }
-            }
-        }
-    }
-
-    fun selectFastestNodeAndGet(): VpnNode {
-        val fastest = _nodes.value.filter { it.isVerifiedWorking }.minByOrNull { it.pingMs }
-            ?: _nodes.value.minByOrNull { it.pingMs }
-            ?: uiState.value.selectedNode
-        return fastest.copy(protocol = uiState.value.preferences.preferredProtocol)
     }
 
     fun addCustomCommunityNode(
@@ -416,28 +331,33 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             listOf(customNode) + existing.filter { it.countryCode != cleanCode }
         }
         AetherVpnStateBus.updateNodePool(_nodes.value + AetherVpnStateBus.nodePool.value)
-        viewModelScope.launch {
-            repository.setSelectedNode(customNode.id, isAutoFastest = false)
-        }
+        selectManualNode(customNode)
         _filterState.update {
             it.copy(
                 showAddCustomNodeModal = false,
-                bannerFeedback = "Added ${customNode.flagEmoji} ${customNode.countryName}"
+                bannerFeedback = "Added & selected ${customNode.flagEmoji} ${customNode.countryName}"
             )
         }
     }
 
-    fun clearAuditLogs() {
-        AetherVpnStateBus.clearLogs()
-    }
-
-    fun startVpnServiceWithNode(context: Context, node: VpnNode = uiState.value.selectedNode) {
+    /**
+     * Starts [AetherVpnService] with the exact [node] requested.
+     * When [isManualSelection] is true, never replaces [node] with Auto-Fastest!
+     */
+    fun startVpnServiceWithNode(
+        context: Context,
+        node: VpnNode = uiState.value.selectedNode,
+        isManualSelection: Boolean = !uiState.value.isAutoFastestMode
+    ) {
         val prefs = uiState.value.preferences
-        val targetNode = if (uiState.value.isAutoFastestMode) {
-            selectFastestNodeAndGet()
-        } else {
+        val targetNode = if (isManualSelection) {
             node
+        } else {
+            _nodes.value.filter { it.isVerifiedWorking }.minByOrNull { it.pingMs }
+                ?: _nodes.value.minByOrNull { it.pingMs }
+                ?: node
         }
+
         val intent = Intent(context, AetherVpnService::class.java).apply {
             action = AetherVpnService.ACTION_CONNECT
             putExtra(AetherVpnService.EXTRA_NODE_ID, targetNode.id)
@@ -453,6 +373,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             putExtra(AetherVpnService.EXTRA_NODE_PROTOCOL, targetNode.protocol.name)
             putExtra(AetherVpnService.EXTRA_NODE_RELAY_TYPE, targetNode.relayType.name)
             putExtra(AetherVpnService.EXTRA_NODE_VERIFIED, targetNode.isVerifiedWorking)
+            putExtra(AetherVpnService.EXTRA_IS_MANUAL_SELECTION, isManualSelection)
             putExtra(AetherVpnService.EXTRA_DNS_SERVER, prefs.dnsServer)
             putExtra(AetherVpnService.EXTRA_SAFE_SPLIT_TUNNEL, prefs.safeSplitTunnelMode)
         }

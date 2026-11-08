@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "AetherNode"
+rootProject.name = "A VPN"
 
 include(":app")

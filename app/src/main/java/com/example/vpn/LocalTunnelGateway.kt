@@ -53,6 +53,9 @@ class LocalTunnelGateway(
     @Volatile
     private var primaryNode: VpnNode? = null
 
+    @Volatile
+    private var keepDisplayNodeLocked: Boolean = false
+
     private val fallbackVerifiedNodes = CopyOnWriteArrayList<VpnNode>()
 
     val totalBytesReceived = AtomicLong(0L)
@@ -64,10 +67,12 @@ class LocalTunnelGateway(
 
     fun start(
         initialNode: VpnNode,
-        verifiedBackups: List<VpnNode>
+        verifiedBackups: List<VpnNode>,
+        lockDisplayNode: Boolean = false
     ): Int {
         stop()
         primaryNode = initialNode
+        keepDisplayNodeLocked = lockDisplayNode
         fallbackVerifiedNodes.clear()
         fallbackVerifiedNodes.addAll(
             verifiedBackups.filter { "${it.ipAddress}:${it.port}" != "${initialNode.ipAddress}:${initialNode.port}" }
@@ -260,7 +265,7 @@ class LocalTunnelGateway(
                 timeoutMs = 4500
             )
             if (connectedSocket != null) {
-                if (candidate.id != primary.id) {
+                if (candidate.id != primary.id && !keepDisplayNodeLocked) {
                     primaryNode = candidate
                     AetherVpnStateBus.updateTelemetry {
                         it.copy(

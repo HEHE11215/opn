@@ -3,6 +3,7 @@ package com.example.ui
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
@@ -15,6 +16,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,6 +38,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.PowerSettingsNew
@@ -43,8 +46,6 @@ import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -55,33 +56,106 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.model.TunnelConnectionStatus
 import com.example.model.VpnNode
-import com.example.model.VpnProtocol
 import com.example.ui.theme.AmberHandshaking
 import com.example.ui.theme.EmeraldConnected
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.SkyBluePrimary
 import java.util.Locale
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
+
+private val FireOrange = Color(0xFFFF5E1A)
+private val FireGold = Color(0xFFFFB800)
+private val FireCrimson = Color(0xFFFF2A54)
 
 /**
- * Clean, Consumer-Focused One-Tap Connect Screen.
- * Focuses strictly on what users care about: One-tap Auto-Connect, Selected Country,
- * Connection Status, and Live Speed.
+ * Reusable Ultra-Lightweight iPhone Glassmorphic Card ("iPhone Glass Hi Effect").
+ * Uses translucent frosted layers + specular top-left highlight border.
+ */
+@Composable
+fun IosGlassCard(
+    isDark: Boolean,
+    modifier: Modifier = Modifier,
+    cornerRadius: Dp = 26.dp,
+    accentGlowColor: Color? = null,
+    content: @Composable () -> Unit
+) {
+    val shape = RoundedCornerShape(cornerRadius)
+    val glassFill = if (isDark) {
+        Brush.verticalGradient(
+            colors = listOf(
+                Color(0xFF18263E).copy(alpha = 0.72f),
+                Color(0xFF0F192B).copy(alpha = 0.58f)
+            )
+        )
+    } else {
+        Brush.verticalGradient(
+            colors = listOf(
+                Color.White.copy(alpha = 0.78f),
+                Color(0xFFF2F7FF).copy(alpha = 0.62f)
+            )
+        )
+    }
+
+    val specularBorder = Brush.linearGradient(
+        colors = if (accentGlowColor != null) {
+            listOf(
+                accentGlowColor.copy(alpha = 0.75f),
+                Color.White.copy(alpha = if (isDark) 0.25f else 0.85f),
+                accentGlowColor.copy(alpha = 0.35f)
+            )
+        } else if (isDark) {
+            listOf(
+                Color.White.copy(alpha = 0.32f),
+                Color.White.copy(alpha = 0.08f),
+                SkyBluePrimary.copy(alpha = 0.22f)
+            )
+        } else {
+            listOf(
+                Color.White.copy(alpha = 0.95f),
+                Color.White.copy(alpha = 0.45f),
+                SkyBluePrimary.copy(alpha = 0.20f)
+            )
+        }
+    )
+
+    Box(
+        modifier = modifier
+            .clip(shape)
+            .background(brush = glassFill, shape = shape)
+            .border(width = 1.2.dp, brush = specularBorder, shape = shape)
+    ) {
+        content()
+    }
+}
+
+/**
+ * Lightweight iPhone Glassmorphic Connect Screen for **A VPN** with:
+ * - Animated Blazing Fire Orb (`FireConnectOrb`) when connecting / connected
+ * - Real-Time Live Telemetry & Speed Indicator (`RealtimeLiveIndicatorPill`)
+ * - Strict respect for Manual Country Selection vs Auto Fastest Mode
+ * - Bottom signature: "Made with love by Ashir ♥️"
  */
 @Composable
 fun ConnectScreen(
@@ -89,44 +163,46 @@ fun ConnectScreen(
     onToggleConnection: () -> Unit,
     onConnectSmartFastest: () -> Unit,
     onOpenNodeSelector: () -> Unit,
-    onPingSelectedNode: (VpnNode) -> Unit,
-    onSelectProtocol: (VpnProtocol) -> Unit,
-    onInspectConfig: (VpnNode) -> Unit,
-    onVerifyExitIp: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val status = uiState.telemetry.status
     val isConnected = status == TunnelConnectionStatus.CONNECTED
-    val activeNode = uiState.telemetry.activeNode ?: uiState.selectedNode
-    val exitCountry = uiState.telemetry.verifiedExitCountry ?: activeNode.countryName
+    val isConnecting = status == TunnelConnectionStatus.CONNECTING
+    val isDark = uiState.preferences.isDarkTheme
+
+    // Show the user's selected country or the active tunnel country
+    val displayNode = if (!uiState.isAutoFastestMode) {
+        uiState.selectedNode
+    } else {
+        uiState.telemetry.activeNode ?: uiState.selectedNode
+    }
+    val exitCountry = if (!uiState.isAutoFastestMode) {
+        uiState.selectedNode.countryName
+    } else {
+        uiState.telemetry.verifiedExitCountry ?: displayNode.countryName
+    }
 
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
             .testTag("connect_screen_list"),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // 1. Hero One-Tap Auto-Connect Card
+        // 1. Hero iPhone Glass Card with Real-Time Indicator + Blazing Fire Connect Orb
         item {
-            Card(
+            IosGlassCard(
+                isDark = isDark,
+                cornerRadius = 30.dp,
+                accentGlowColor = when {
+                    isConnected -> FireOrange
+                    isConnecting -> FireGold
+                    else -> null
+                },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .widthIn(max = 560.dp),
-                shape = RoundedCornerShape(28.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                ),
-                border = BorderStroke(
-                    width = 1.dp,
-                    color = if (isConnected) {
-                        EmeraldConnected.copy(alpha = 0.4f)
-                    } else {
-                        MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)
-                    }
-                ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                    .widthIn(max = 560.dp)
             ) {
                 Box(modifier = Modifier.fillMaxWidth()) {
                     Image(
@@ -134,45 +210,46 @@ fun ConnectScreen(
                         contentDescription = null,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(180.dp),
+                            .height(210.dp),
                         contentScale = ContentScale.Crop,
-                        alpha = if (uiState.preferences.isDarkTheme) 0.16f else 0.40f
-                    )
-
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(180.dp)
-                            .background(
-                                Brush.verticalGradient(
-                                    colors = listOf(
-                                        MaterialTheme.colorScheme.surface.copy(alpha = 0.12f),
-                                        MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
-                                        MaterialTheme.colorScheme.surface
-                                    )
-                                )
-                            )
+                        alpha = if (isDark) 0.14f else 0.25f
                     )
 
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 22.dp, vertical = 22.dp),
+                            .padding(horizontal = 20.dp, vertical = 20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        StatusPillBadge(
-                            status = status,
-                            exitCountry = exitCountry
-                        )
+                        // Top Row: Connection Status Badge + Real-Time Live Indicator
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            StatusPillBadge(
+                                status = status,
+                                exitCountry = exitCountry
+                            )
 
-                        Spacer(modifier = Modifier.height(22.dp))
+                            RealtimeLiveIndicatorPill(
+                                isConnected = isConnected,
+                                isConnecting = isConnecting,
+                                downloadKbps = uiState.telemetry.downloadRateKbps,
+                                uploadKbps = uiState.telemetry.uploadRateKbps,
+                                pingMs = displayNode.pingMs
+                            )
+                        }
 
-                        OneTapConnectOrb(
+                        Spacer(modifier = Modifier.height(18.dp))
+
+                        // Central Blazing Fire Animated Connect Orb
+                        FireConnectOrb(
                             status = status,
                             onClick = onToggleConnection
                         )
 
-                        Spacer(modifier = Modifier.height(20.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
 
                         AnimatedContent(
                             targetState = status,
@@ -187,26 +264,42 @@ fun ConnectScreen(
                                                 fontFamily = JetBrainsMonoFontFamily,
                                                 fontWeight = FontWeight.Bold
                                             ),
-                                            color = EmeraldConnected
+                                            color = if (isDark) FireGold else FireOrange
                                         )
                                         Spacer(modifier = Modifier.height(4.dp))
-                                        Text(
-                                            text = "Connected to ${activeNode.flagEmoji} $exitCountry",
-                                            style = MaterialTheme.typography.titleMedium,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            textAlign = TextAlign.Center
-                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.LocalFireDepartment,
+                                                contentDescription = null,
+                                                tint = FireOrange,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = "Connected to ${displayNode.flagEmoji} $exitCountry",
+                                                style = MaterialTheme.typography.titleMedium.copy(
+                                                    fontWeight = FontWeight.Bold
+                                                ),
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                textAlign = TextAlign.Center
+                                            )
+                                        }
                                     }
 
                                     TunnelConnectionStatus.CONNECTING -> {
                                         Text(
-                                            text = "Finding Fastest Server…",
-                                            style = MaterialTheme.typography.titleLarge,
-                                            color = AmberHandshaking
+                                            text = "Igniting Fire Tunnel…",
+                                            style = MaterialTheme.typography.titleLarge.copy(
+                                                fontWeight = FontWeight.Bold
+                                            ),
+                                            color = FireOrange
                                         )
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
-                                            text = "Verifying secure connection to ${activeNode.flagEmoji} ${activeNode.countryName}",
+                                            text = "Connecting to ${displayNode.flagEmoji} ${displayNode.countryName} (${displayNode.cityName})",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             textAlign = TextAlign.Center
@@ -215,16 +308,23 @@ fun ConnectScreen(
 
                                     else -> {
                                         Text(
-                                            text = "Tap to Auto-Connect",
-                                            style = MaterialTheme.typography.headlineMedium,
-                                            color = MaterialTheme.colorScheme.onSurface
+                                            text = if (uiState.isAutoFastestMode) {
+                                                "Tap to Ignite A VPN"
+                                            } else {
+                                                "Connect to ${displayNode.flagEmoji} ${displayNode.countryName}"
+                                            },
+                                            style = MaterialTheme.typography.headlineMedium.copy(
+                                                fontWeight = FontWeight.Bold
+                                            ),
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            textAlign = TextAlign.Center
                                         )
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
-                                            text = if (uiState.isSyncingApi) {
-                                                "Auto-fetching fastest servers worldwide…"
+                                            text = if (uiState.isAutoFastestMode) {
+                                                "Smart Auto-Fastest • ${displayNode.flagEmoji} ${displayNode.countryName} (${displayNode.pingMs} ms)"
                                             } else {
-                                                "Automatically connects to the fastest server"
+                                                "Manual Server Locked • ${displayNode.cityName} (${displayNode.pingMs} ms)"
                                             },
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -235,38 +335,57 @@ fun ConnectScreen(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(20.dp))
+                        Spacer(modifier = Modifier.height(18.dp))
 
-                        // Clean Full-Width Smart Auto-Connect Button
+                        // Quick Action Button: Connect Selected Country OR Switch to Auto-Fastest
                         Button(
-                            onClick = onConnectSmartFastest,
+                            onClick = {
+                                if (!uiState.isAutoFastestMode && !isConnected) {
+                                    onToggleConnection()
+                                } else {
+                                    onConnectSmartFastest()
+                                }
+                            },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(50.dp)
+                                .height(48.dp)
                                 .testTag("smart_fastest_button"),
                             shape = RoundedCornerShape(16.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = if (isConnected) {
-                                    MaterialTheme.colorScheme.secondaryContainer
+                                    FireOrange.copy(alpha = 0.16f)
                                 } else {
-                                    MaterialTheme.colorScheme.primary
+                                    SkyBluePrimary
                                 },
                                 contentColor = if (isConnected) {
-                                    MaterialTheme.colorScheme.onSecondaryContainer
+                                    FireOrange
                                 } else {
                                     Color.White
                                 }
                             )
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Bolt,
+                                imageVector = if (!uiState.isAutoFastestMode && !isConnected) {
+                                    Icons.Default.LocalFireDepartment
+                                } else {
+                                    Icons.Default.Bolt
+                                },
                                 contentDescription = null,
                                 modifier = Modifier.size(20.dp)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = if (isConnected) "Switch to Fastest Server" else "Auto-Connect Best Server",
-                                style = MaterialTheme.typography.titleMedium
+                                text = when {
+                                    !uiState.isAutoFastestMode && !isConnected ->
+                                        "Connect ${displayNode.flagEmoji} ${displayNode.countryName} Now"
+                                    isConnected ->
+                                        "Boost to Fastest Server"
+                                    else ->
+                                        "Auto-Connect Best Server"
+                                },
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.Bold
+                                )
                             )
                         }
                     }
@@ -274,16 +393,17 @@ fun ConnectScreen(
             }
         }
 
-        // 2. Selected Location Selector Card (Clean Consumer Design)
+        // 2. iPhone Glass Selected Country Selector Card
         item {
-            SelectedCountryCard(
-                node = activeNode,
+            SelectedCountryGlassCard(
+                node = displayNode,
                 isAutoMode = uiState.isAutoFastestMode,
+                isDark = isDark,
                 onOpenNodeList = onOpenNodeSelector
             )
         }
 
-        // 3. Simple Download & Upload Speed Cards
+        // 3. Real-Time Download & Upload iPhone Glass Cards
         item {
             Row(
                 modifier = Modifier
@@ -291,23 +411,159 @@ fun ConnectScreen(
                     .widthIn(max = 560.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                TelemetryStatCard(
+                TelemetryGlassCard(
                     title = "DOWNLOAD",
-                    primaryValue = if (isConnected) String.format(Locale.US, "%.1f kbps", uiState.telemetry.downloadRateKbps) else "0.0 kbps",
+                    primaryValue = if (isConnected) {
+                        String.format(Locale.US, "%.1f kbps", uiState.telemetry.downloadRateKbps)
+                    } else {
+                        "0.0 kbps"
+                    },
                     secondaryValue = formatBytesReadable(uiState.telemetry.bytesDownloaded),
                     icon = Icons.Default.Download,
                     accentColor = SkyBluePrimary,
+                    isDark = isDark,
                     modifier = Modifier.weight(1f)
                 )
-                TelemetryStatCard(
+                TelemetryGlassCard(
                     title = "UPLOAD",
-                    primaryValue = if (isConnected) String.format(Locale.US, "%.1f kbps", uiState.telemetry.uploadRateKbps) else "0.0 kbps",
+                    primaryValue = if (isConnected) {
+                        String.format(Locale.US, "%.1f kbps", uiState.telemetry.uploadRateKbps)
+                    } else {
+                        "0.0 kbps"
+                    },
                     secondaryValue = formatBytesReadable(uiState.telemetry.bytesUploaded),
                     icon = Icons.Default.Upload,
-                    accentColor = EmeraldConnected,
+                    accentColor = FireOrange,
+                    isDark = isDark,
                     modifier = Modifier.weight(1f)
                 )
             }
+        }
+
+        // 4. Footer Signature Badge: "Made with love by Ashir ♥️"
+        item {
+            IosGlassCard(
+                isDark = isDark,
+                cornerRadius = 50.dp,
+                modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = stringResource(R.string.made_by_ashir),
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            fontWeight = FontWeight.SemiBold
+                        ),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Real-Time Live Indicator Pill showing pulsing status dot, animated wave bars, and live speed/ping.
+ */
+@Composable
+private fun RealtimeLiveIndicatorPill(
+    isConnected: Boolean,
+    isConnecting: Boolean,
+    downloadKbps: Double,
+    uploadKbps: Double,
+    pingMs: Int
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "realtime_live_pulse")
+    val dotAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(650, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "live_dot_alpha"
+    )
+    val wavePhase by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = (2f * PI).toFloat(),
+        animationSpec = infiniteRepeatable(
+            animation = tween(900, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "live_wave_phase"
+    )
+
+    val activeColor = when {
+        isConnected -> EmeraldConnected
+        isConnecting -> FireOrange
+        else -> SkyBluePrimary
+    }
+
+    val totalSpeedKbps = downloadKbps + uploadKbps
+    val liveText = when {
+        isConnected -> String.format(Locale.US, "LIVE • %.0f kbps • %d ms", totalSpeedKbps, pingMs)
+        isConnecting -> "SYNCING • $pingMs ms"
+        else -> "READY • $pingMs ms"
+    }
+
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = activeColor.copy(alpha = 0.12f),
+        border = BorderStroke(1.dp, activeColor.copy(alpha = 0.35f)),
+        modifier = Modifier.testTag("realtime_live_indicator")
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            // Pulsing real-time dot
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(
+                        activeColor.copy(
+                            alpha = if (isConnected || isConnecting) dotAlpha else 0.75f
+                        )
+                    )
+            )
+
+            // Animated 3-bar real-time activity equalizer
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                modifier = Modifier.height(12.dp)
+            ) {
+                for (i in 0..2) {
+                    val dynamicFactor = if (isConnected || isConnecting) {
+                        0.45f + 0.55f * ((sin(wavePhase + i * 1.3f) + 1f) / 2f)
+                    } else {
+                        0.4f + (i * 0.2f)
+                    }
+                    Box(
+                        modifier = Modifier
+                            .width(2.5.dp)
+                            .height((12f * dynamicFactor).dp)
+                            .clip(CircleShape)
+                            .background(activeColor)
+                    )
+                }
+            }
+
+            Text(
+                text = liveText,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontFamily = JetBrainsMonoFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.sp
+                ),
+                color = activeColor,
+                maxLines = 1
+            )
         }
     }
 }
@@ -319,15 +575,15 @@ private fun StatusPillBadge(
 ) {
     val containerColor by animateColorAsState(
         targetValue = when (status) {
-            TunnelConnectionStatus.CONNECTED -> EmeraldConnected.copy(alpha = 0.14f)
-            TunnelConnectionStatus.CONNECTING -> AmberHandshaking.copy(alpha = 0.16f)
-            else -> MaterialTheme.colorScheme.surfaceVariant
+            TunnelConnectionStatus.CONNECTED -> FireOrange.copy(alpha = 0.16f)
+            TunnelConnectionStatus.CONNECTING -> AmberHandshaking.copy(alpha = 0.18f)
+            else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
         },
         label = "status_pill_bg"
     )
     val contentColor by animateColorAsState(
         targetValue = when (status) {
-            TunnelConnectionStatus.CONNECTED -> EmeraldConnected
+            TunnelConnectionStatus.CONNECTED -> FireOrange
             TunnelConnectionStatus.CONNECTING -> AmberHandshaking
             else -> MaterialTheme.colorScheme.onSurfaceVariant
         },
@@ -337,54 +593,89 @@ private fun StatusPillBadge(
     Surface(
         shape = RoundedCornerShape(50),
         color = containerColor,
-        border = BorderStroke(1.dp, contentColor.copy(alpha = 0.3f)),
+        border = BorderStroke(1.dp, contentColor.copy(alpha = 0.35f)),
         modifier = Modifier.testTag("connection_status_badge")
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 7.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
                 imageVector = when (status) {
-                    TunnelConnectionStatus.CONNECTED -> Icons.Default.Lock
+                    TunnelConnectionStatus.CONNECTED -> Icons.Default.LocalFireDepartment
                     TunnelConnectionStatus.CONNECTING -> Icons.Default.Sync
                     else -> Icons.Default.LockOpen
                 },
                 contentDescription = null,
                 tint = contentColor,
-                modifier = Modifier.size(15.dp)
+                modifier = Modifier.size(14.dp)
             )
-            Spacer(modifier = Modifier.width(6.dp))
+            Spacer(modifier = Modifier.width(5.dp))
             Text(
                 text = when (status) {
-                    TunnelConnectionStatus.CONNECTED -> "PROTECTED • ${exitCountry.uppercase(Locale.US)}"
-                    TunnelConnectionStatus.CONNECTING -> "CONNECTING…"
-                    TunnelConnectionStatus.DISCONNECTING -> "DISCONNECTING…"
-                    TunnelConnectionStatus.ERROR -> "DISCONNECTED"
-                    TunnelConnectionStatus.DISCONNECTED -> "NOT CONNECTED"
+                    TunnelConnectionStatus.CONNECTED -> "FIRE • ${exitCountry.take(10).uppercase(Locale.US)}"
+                    TunnelConnectionStatus.CONNECTING -> "IGNITING…"
+                    TunnelConnectionStatus.DISCONNECTING -> "STOPPING…"
+                    TunnelConnectionStatus.ERROR -> "OFFLINE"
+                    TunnelConnectionStatus.DISCONNECTED -> "STANDBY"
                 },
-                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                color = contentColor
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.sp
+                ),
+                color = contentColor,
+                maxLines = 1
             )
         }
     }
 }
 
+/**
+ * Central Connect Button with Multi-Layered Blazing Fire Animation when Connecting or Connected!
+ */
 @Composable
-private fun OneTapConnectOrb(
+private fun FireConnectOrb(
     status: TunnelConnectionStatus,
     onClick: () -> Unit
 ) {
     val isConnected = status == TunnelConnectionStatus.CONNECTED
     val isConnecting = status == TunnelConnectionStatus.CONNECTING
+    val isFireActive = isConnected || isConnecting
 
-    val infiniteTransition = rememberInfiniteTransition(label = "orb_pulse")
-    val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 1.0f,
-        targetValue = if (isConnected || isConnecting) 1.14f else 1.04f,
+    val infiniteTransition = rememberInfiniteTransition(label = "fire_orb_transition")
+
+    val flamePhase by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = (2f * PI).toFloat(),
         animationSpec = infiniteRepeatable(
             animation = tween(
-                durationMillis = if (isConnecting) 750 else 1800,
+                durationMillis = if (isConnecting) 900 else 1400,
+                easing = LinearEasing
+            ),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "flame_phase"
+    )
+
+    val emberRise by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(
+                durationMillis = if (isConnecting) 850 else 1300,
+                easing = LinearEasing
+            ),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "ember_rise"
+    )
+
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 1.0f,
+        targetValue = if (isFireActive) 1.12f else 1.04f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(
+                durationMillis = if (isConnecting) 650 else 1500,
                 easing = FastOutSlowInEasing
             ),
             repeatMode = RepeatMode.Reverse
@@ -393,56 +684,162 @@ private fun OneTapConnectOrb(
     )
 
     val orbScale by animateFloatAsState(
-        targetValue = if (isConnected) 1.03f else 1.0f,
+        targetValue = if (isConnected) 1.04f else 1.0f,
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
         label = "orb_spring"
-    )
-
-    val primaryRingColor by animateColorAsState(
-        targetValue = when (status) {
-            TunnelConnectionStatus.CONNECTED -> EmeraldConnected
-            TunnelConnectionStatus.CONNECTING -> AmberHandshaking
-            else -> SkyBluePrimary
-        },
-        label = "orb_ring_color"
     )
 
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .size(172.dp)
+            .size(196.dp)
             .scale(orbScale)
     ) {
+        // Animated Fire / Flame Aura & Rising Embers Canvas
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
                 .scale(pulseScale)
         ) {
-            drawCircle(
-                color = primaryRingColor.copy(alpha = 0.12f),
-                radius = size.minDimension / 2f
+            val center = Offset(size.width / 2f, size.height / 2f)
+            val baseRadius = size.minDimension * 0.36f
+
+            if (isFireActive) {
+                // 1. Outer Fiery Radial Heat Glow
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            FireGold.copy(alpha = 0.42f),
+                            FireOrange.copy(alpha = 0.28f),
+                            FireCrimson.copy(alpha = 0.12f),
+                            Color.Transparent
+                        ),
+                        center = center,
+                        radius = size.minDimension * 0.52f
+                    ),
+                    radius = size.minDimension * 0.52f,
+                    center = center
+                )
+
+                // 2. Dynamic Undulating Flame Crown Around the Orb (24 flame tongues)
+                val flamePathOuter = Path()
+                val flamePathInner = Path()
+                val steps = 72
+                for (i in 0..steps) {
+                    val angle = (i.toFloat() / steps) * (2f * PI.toFloat())
+                    // Upward bias so flames lick higher near the top (-PI/2)
+                    val upwardLift = (( -sin(angle) + 1f ) * 0.5f) * 14.dp.toPx()
+                    val wave1 = sin(angle * 7f + flamePhase * 2f) * 7.dp.toPx()
+                    val wave2 = cos(angle * 11f - flamePhase * 3f) * 5.dp.toPx()
+                    val rOuter = baseRadius + 14.dp.toPx() + upwardLift + wave1 + wave2
+                    val rInner = baseRadius + 7.dp.toPx() + (upwardLift * 0.55f) + (wave1 * 0.6f)
+
+                    val xOut = center.x + rOuter * cos(angle)
+                    val yOut = center.y + rOuter * sin(angle)
+                    val xIn = center.x + rInner * cos(angle)
+                    val yIn = center.y + rInner * sin(angle)
+
+                    if (i == 0) {
+                        flamePathOuter.moveTo(xOut, yOut)
+                        flamePathInner.moveTo(xIn, yIn)
+                    } else {
+                        flamePathOuter.lineTo(xOut, yOut)
+                        flamePathInner.lineTo(xIn, yIn)
+                    }
+                }
+                flamePathOuter.close()
+                flamePathInner.close()
+
+                drawPath(
+                    path = flamePathOuter,
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            FireGold.copy(alpha = 0.55f),
+                            FireOrange.copy(alpha = 0.45f),
+                            FireCrimson.copy(alpha = 0.35f)
+                        )
+                    )
+                )
+                drawPath(
+                    path = flamePathInner,
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            Color.White.copy(alpha = 0.55f),
+                            FireGold.copy(alpha = 0.50f),
+                            FireOrange.copy(alpha = 0.40f)
+                        )
+                    )
+                )
+
+                // 3. Rising Glowing Fire Sparks / Embers
+                for (sparkIdx in 0 until 12) {
+                    val seedAngle = (sparkIdx / 12f) * (2f * PI.toFloat()) + (flamePhase * 0.3f)
+                    val progress = (emberRise + (sparkIdx * 0.13f)) % 1f
+                    val sparkRadiusOffset = baseRadius + (progress * 32.dp.toPx())
+                    val sparkX = center.x + cos(seedAngle) * (sparkRadiusOffset * 0.85f)
+                    val sparkY = center.y + sin(seedAngle) * (sparkRadiusOffset * 0.85f) - (progress * 26.dp.toPx())
+                    val sparkAlpha = (1f - progress).coerceIn(0f, 1f)
+
+                    drawCircle(
+                        color = if (sparkIdx % 2 == 0) {
+                            FireGold.copy(alpha = sparkAlpha * 0.9f)
+                        } else {
+                            FireOrange.copy(alpha = sparkAlpha * 0.85f)
+                        },
+                        radius = (3.8f * (1f - progress * 0.5f)).dp.toPx(),
+                        center = Offset(sparkX, sparkY)
+                    )
+                }
+            } else {
+                // Standby iPhone Glass Cyan Aura
+                drawCircle(
+                    color = SkyBluePrimary.copy(alpha = 0.12f),
+                    radius = size.minDimension * 0.45f
+                )
+                drawCircle(
+                    color = SkyBluePrimary.copy(alpha = 0.28f),
+                    radius = size.minDimension * 0.39f,
+                    style = Stroke(width = 2.dp.toPx())
+                )
+            }
+        }
+
+        // Core Interactive Glassmorphic / Fire Orb Button
+        val buttonShape = CircleShape
+        val orbBrush = when {
+            isConnected -> Brush.linearGradient(
+                colors = listOf(FireGold, FireOrange, FireCrimson)
             )
-            drawCircle(
-                color = primaryRingColor.copy(alpha = 0.28f),
-                radius = (size.minDimension / 2f) * 0.88f,
-                style = Stroke(width = 2.dp.toPx())
+            isConnecting -> Brush.linearGradient(
+                colors = listOf(FireOrange, AmberHandshaking, FireCrimson)
+            )
+            else -> Brush.linearGradient(
+                colors = listOf(
+                    MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.80f)
+                )
             )
         }
 
         Surface(
-            shape = CircleShape,
-            color = if (isConnected) EmeraldConnected else MaterialTheme.colorScheme.surface,
+            shape = buttonShape,
+            color = Color.Transparent,
             border = BorderStroke(
                 width = 3.dp,
-                color = primaryRingColor
+                brush = if (isFireActive) {
+                    Brush.linearGradient(listOf(Color.White, FireGold, FireOrange))
+                } else {
+                    Brush.linearGradient(listOf(Color.White.copy(alpha = 0.8f), SkyBluePrimary))
+                }
             ),
-            shadowElevation = if (isConnected) 10.dp else 4.dp,
+            shadowElevation = if (isFireActive) 14.dp else 6.dp,
             modifier = Modifier
-                .size(132.dp)
-                .clip(CircleShape)
+                .size(136.dp)
+                .clip(buttonShape)
+                .background(orbBrush, buttonShape)
                 .clickable(onClick = onClick)
                 .semantics {
-                    contentDescription = if (isConnected) "Disconnect VPN" else "Connect VPN"
+                    contentDescription = if (isConnected) "Disconnect A VPN" else "Connect A VPN"
                 }
                 .testTag("connect_toggle_button")
         ) {
@@ -451,24 +848,33 @@ private fun OneTapConnectOrb(
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Icon(
-                    imageVector = Icons.Default.PowerSettingsNew,
-                    contentDescription = null,
-                    tint = if (isConnected) Color.White else primaryRingColor,
-                    modifier = Modifier.size(44.dp)
-                )
-                Spacer(modifier = Modifier.height(6.dp))
+                if (isFireActive) {
+                    Icon(
+                        imageVector = Icons.Default.LocalFireDepartment,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(48.dp)
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.PowerSettingsNew,
+                        contentDescription = null,
+                        tint = SkyBluePrimary,
+                        modifier = Modifier.size(44.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = when (status) {
-                        TunnelConnectionStatus.CONNECTED -> "STOP"
-                        TunnelConnectionStatus.CONNECTING -> "WAIT…"
-                        else -> "START"
+                        TunnelConnectionStatus.CONNECTED -> "BLAZING"
+                        TunnelConnectionStatus.CONNECTING -> "IGNITING"
+                        else -> "CONNECT"
                     },
                     style = MaterialTheme.typography.labelSmall.copy(
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.2.sp
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 1.3.sp
                     ),
-                    color = if (isConnected) Color.White else primaryRingColor
+                    color = if (isFireActive) Color.White else SkyBluePrimary
                 )
             }
         }
@@ -476,33 +882,30 @@ private fun OneTapConnectOrb(
 }
 
 @Composable
-private fun SelectedCountryCard(
+private fun SelectedCountryGlassCard(
     node: VpnNode,
     isAutoMode: Boolean,
+    isDark: Boolean,
     onOpenNodeList: () -> Unit
 ) {
-    Card(
+    IosGlassCard(
+        isDark = isDark,
+        cornerRadius = 22.dp,
         modifier = Modifier
             .fillMaxWidth()
             .widthIn(max = 560.dp)
             .clickable(onClick = onOpenNodeList)
-            .testTag("selected_node_card"),
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            .testTag("selected_node_card")
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 18.dp, vertical = 16.dp),
+                .padding(horizontal = 18.dp, vertical = 15.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Surface(
                 shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.75f),
                 modifier = Modifier.size(50.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
@@ -520,15 +923,17 @@ private fun SelectedCountryCard(
                     text = if (isAutoMode) {
                         "Auto Best • ${node.countryName}"
                     } else {
-                        node.countryName
+                        "Manual • ${node.countryName}"
                     },
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontWeight = FontWeight.Bold
+                    ),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "${node.pingMs} ms • ${node.latencyQualityLabel}",
+                    text = "${node.cityName} • ${node.pingMs} ms (${node.latencyQualityLabel})",
                     style = MaterialTheme.typography.bodyMedium,
                     color = latencyColor(node.pingMs),
                     maxLines = 1,
@@ -538,22 +943,25 @@ private fun SelectedCountryCard(
 
             Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.primaryContainer
+                color = SkyBluePrimary.copy(alpha = 0.16f),
+                border = BorderStroke(1.dp, SkyBluePrimary.copy(alpha = 0.35f))
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Change",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                        text = "Servers",
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = SkyBluePrimary
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
                         contentDescription = "Change country",
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        tint = SkyBluePrimary,
                         modifier = Modifier.size(12.dp)
                     )
                 }
@@ -563,28 +971,25 @@ private fun SelectedCountryCard(
 }
 
 @Composable
-private fun TelemetryStatCard(
+private fun TelemetryGlassCard(
     title: String,
     primaryValue: String,
     secondaryValue: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     accentColor: Color,
+    isDark: Boolean,
     modifier: Modifier = Modifier
 ) {
-    Card(
-        modifier = modifier,
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    IosGlassCard(
+        isDark = isDark,
+        cornerRadius = 20.dp,
+        modifier = modifier
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(
                     shape = CircleShape,
-                    color = accentColor.copy(alpha = 0.14f),
+                    color = accentColor.copy(alpha = 0.16f),
                     modifier = Modifier.size(28.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
@@ -599,14 +1004,19 @@ private fun TelemetryStatCard(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.Bold
+                    ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = primaryValue,
-                style = MaterialTheme.typography.titleLarge.copy(fontFamily = JetBrainsMonoFontFamily),
+                style = MaterialTheme.typography.titleLarge.copy(
+                    fontFamily = JetBrainsMonoFontFamily,
+                    fontWeight = FontWeight.Bold
+                ),
                 color = MaterialTheme.colorScheme.onSurface
             )
             Spacer(modifier = Modifier.height(2.dp))

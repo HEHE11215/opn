@@ -12,9 +12,18 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,18 +38,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Public
-import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.outlined.PowerSettingsNew
 import androidx.compose.material.icons.outlined.Public
-import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -54,7 +61,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -62,34 +68,39 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.model.TunnelConnectionStatus
 import com.example.model.VpnNode
-import com.example.model.VpnProtocol
 import com.example.ui.AetherTab
 import com.example.ui.ConnectScreen
 import com.example.ui.NodeListScreen
-import com.example.ui.OpenSourceAuditScreen
 import com.example.ui.VpnUiState
 import com.example.ui.VpnViewModel
 import com.example.ui.theme.AetherNodeTheme
-import com.example.ui.theme.EmeraldConnected
-import com.example.ui.theme.JetBrainsMonoFontFamily
+import com.example.ui.theme.SkyBluePrimary
 import com.example.vpn.AetherVpnStateBus
 import kotlinx.coroutines.delay
 
 /**
- * MainActivity for AetherNode — Lightweight Open-Source Worldwide VPN Client.
+ * MainActivity for **A VPN** — Fast Worldwide Free VPN with iPhone Glassmorphic UI,
+ * Animated Fire Connect Orb, Manual Country Lock, and Startup Splash Screen.
  */
 class MainActivity : ComponentActivity() {
 
@@ -102,7 +113,7 @@ class MainActivity : ComponentActivity() {
             val uiState by vpnViewModel.uiState.collectAsStateWithLifecycle()
 
             AetherNodeTheme(darkTheme = uiState.preferences.isDarkTheme) {
-                AetherNodeApp(
+                AVpnRootApp(
                     uiState = uiState,
                     viewModel = vpnViewModel
                 )
@@ -113,30 +124,38 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AetherNodeApp(
+fun AVpnRootApp(
     uiState: VpnUiState,
     viewModel: VpnViewModel
 ) {
     val context = LocalContext.current
-    val clipboardManager = LocalClipboardManager.current
+    var showStartupSplash by rememberSaveable { mutableStateOf(true) }
     var pendingNodeToConnect by remember { mutableStateOf<VpnNode?>(null) }
+    var pendingIsManualSelection by remember { mutableStateOf(false) }
 
-    // Back navigation handler for secondary tabs
+    // Dismiss startup splash after 1.65 seconds
+    LaunchedEffect(Unit) {
+        delay(1650L)
+        showStartupSplash = false
+    }
+
+    // Back navigation handler for secondary tab
     BackHandler(enabled = uiState.activeTab != AetherTab.CONNECT) {
         viewModel.selectTab(AetherTab.CONNECT)
     }
 
-    // Optional Android 13+ notification permission launcher so foreground VPN status is visible
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { _ ->
-        // Proceed with VPN connection regardless of notification permission result
         val targetNode = pendingNodeToConnect ?: uiState.selectedNode
-        viewModel.startVpnServiceWithNode(context, targetNode)
+        viewModel.startVpnServiceWithNode(
+            context = context,
+            node = targetNode,
+            isManualSelection = pendingIsManualSelection
+        )
         pendingNodeToConnect = null
     }
 
-    // System Android VpnService permission dialog launcher
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -150,22 +169,27 @@ fun AetherNodeApp(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             } else {
-                viewModel.startVpnServiceWithNode(context, targetNode)
+                viewModel.startVpnServiceWithNode(
+                    context = context,
+                    node = targetNode,
+                    isManualSelection = pendingIsManualSelection
+                )
                 pendingNodeToConnect = null
             }
         } else {
-            AetherVpnStateBus.appendLog(
-                tag = "OS",
-                message = "VPN consent dialog cancelled; starting user-space encrypted tunnel preview."
+            viewModel.startVpnServiceWithNode(
+                context = context,
+                node = targetNode,
+                isManualSelection = pendingIsManualSelection
             )
-            // Start service in user-space preview mode if emulator doesn't show system VPN dialog
-            viewModel.startVpnServiceWithNode(context, targetNode)
             pendingNodeToConnect = null
         }
     }
 
-    val initiateVpnConnect: (VpnNode) -> Unit = { nodeToConnect ->
+    // Connects to the exact target node and explicitly preserves manual vs auto mode!
+    val initiateVpnConnect: (VpnNode, Boolean) -> Unit = { nodeToConnect, isManual ->
         pendingNodeToConnect = nodeToConnect
+        pendingIsManualSelection = isManual
         val prepareIntent = try {
             VpnService.prepare(context)
         } catch (_: Exception) {
@@ -174,277 +198,208 @@ fun AetherNodeApp(
         if (prepareIntent != null) {
             vpnPermissionLauncher.launch(prepareIntent)
         } else {
-            viewModel.startVpnServiceWithNode(context, nodeToConnect)
+            viewModel.startVpnServiceWithNode(
+                context = context,
+                node = nodeToConnect,
+                isManualSelection = isManual
+            )
             pendingNodeToConnect = null
         }
     }
 
-    // Auto-dismiss transient banner feedback after 3.5 seconds
+    // Auto-dismiss transient banner feedback after 3 seconds
     LaunchedEffect(uiState.bannerFeedback) {
         if (uiState.bannerFeedback != null) {
-            delay(3500L)
+            delay(3000L)
             viewModel.dismissBannerFeedback()
         }
     }
 
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        contentWindowInsets = WindowInsets.safeDrawing,
-        topBar = {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            modifier = Modifier.size(34.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.Shield,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Lightweight iPhone Glass Mesh Gradient Backdrop
+        IosMeshBackdrop(isDark = uiState.preferences.isDarkTheme)
+
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            containerColor = Color.Transparent,
+            contentWindowInsets = WindowInsets.safeDrawing,
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Image(
+                                painter = painterResource(id = R.drawable.img_avpn_logo_1794127481273),
+                                contentDescription = "A VPN Logo",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(RoundedCornerShape(11.dp))
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = stringResource(R.string.app_name),
+                                    style = MaterialTheme.typography.titleLarge.copy(
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                )
+                                Text(
+                                    text = stringResource(R.string.tagline_open_source),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column {
-                            Text(
-                                text = stringResource(R.string.app_name),
-                                style = MaterialTheme.typography.titleLarge
-                            )
-                            Text(
-                                text = stringResource(R.string.tagline_open_source),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                },
-                actions = {
-                    IconButton(
-                        onClick = { viewModel.toggleDarkTheme(!uiState.preferences.isDarkTheme) },
-                        modifier = Modifier.testTag("theme_toggle_button")
-                    ) {
-                        Icon(
-                            imageVector = if (uiState.preferences.isDarkTheme) {
-                                Icons.Default.LightMode
-                            } else {
-                                Icons.Default.DarkMode
-                            },
-                            contentDescription = "Toggle light or dark theme"
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background
-                )
-            )
-        },
-        bottomBar = {
-            NavigationBar(
-                windowInsets = WindowInsets.navigationBars,
-                containerColor = MaterialTheme.colorScheme.surface,
-                tonalElevation = 2.dp
-            ) {
-                AetherTab.entries.forEach { tab ->
-                    val selected = uiState.activeTab == tab
-                    NavigationBarItem(
-                        selected = selected,
-                        onClick = { viewModel.selectTab(tab) },
-                        icon = {
+                    },
+                    actions = {
+                        IconButton(
+                            onClick = { viewModel.toggleDarkTheme(!uiState.preferences.isDarkTheme) },
+                            modifier = Modifier.testTag("theme_toggle_button")
+                        ) {
                             Icon(
-                                imageVector = when (tab) {
-                                    AetherTab.CONNECT -> if (selected) Icons.Filled.PowerSettingsNew else Icons.Outlined.PowerSettingsNew
-                                    AetherTab.NODES -> if (selected) Icons.Filled.Public else Icons.Outlined.Public
-                                    AetherTab.AUDIT -> if (selected) Icons.Filled.Terminal else Icons.Outlined.Terminal
+                                imageVector = if (uiState.preferences.isDarkTheme) {
+                                    Icons.Default.LightMode
+                                } else {
+                                    Icons.Default.DarkMode
                                 },
-                                contentDescription = tab.label
+                                contentDescription = "Toggle light or dark theme"
                             )
-                        },
-                        label = {
-                            Text(
-                                text = tab.label,
-                                style = MaterialTheme.typography.labelLarge
-                            )
-                        },
-                        modifier = Modifier.testTag("nav_tab_${tab.route}")
-                    )
-                }
-            }
-        }
-    ) { innerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-        ) {
-            when (uiState.activeTab) {
-                AetherTab.CONNECT -> {
-                    ConnectScreen(
-                        uiState = uiState,
-                        onToggleConnection = {
-                            val currentStatus = uiState.telemetry.status
-                            if (currentStatus == TunnelConnectionStatus.CONNECTED ||
-                                currentStatus == TunnelConnectionStatus.CONNECTING
-                            ) {
-                                viewModel.stopVpnService(context)
-                            } else {
-                                initiateVpnConnect(uiState.selectedNode)
-                            }
-                        },
-                        onConnectSmartFastest = {
-                            val fastest = viewModel.selectFastestNodeAndGet()
-                            initiateVpnConnect(fastest)
-                        },
-                        onOpenNodeSelector = {
-                            viewModel.selectTab(AetherTab.NODES)
-                        },
-                        onPingSelectedNode = { node ->
-                            viewModel.pingSingleNode(node)
-                        },
-                        onSelectProtocol = { proto ->
-                            viewModel.updatePreferredProtocol(proto)
-                        },
-                        onInspectConfig = { node ->
-                            viewModel.inspectNodeConfig(node)
-                        },
-                        onVerifyExitIp = {
-                            viewModel.verifyCurrentExitIp()
                         }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent
                     )
-                }
-
-                AetherTab.NODES -> {
-                    NodeListScreen(
-                        uiState = uiState,
-                        onSearchQueryChange = viewModel::updateSearchQuery,
-                        onSelectRegion = viewModel::selectRegion,
-                        onSelectSortOption = viewModel::selectSortOption,
-                        onSelectAutoFastest = {
-                            val fastest = viewModel.selectFastestNodeAndGet()
-                            viewModel.enableAutoFastestMode(context, connectImmediately = false)
-                            viewModel.selectTab(AetherTab.CONNECT)
-                            initiateVpnConnect(fastest)
-                        },
-                        onSelectAndConnectNode = { node ->
-                            viewModel.selectNode(node)
-                            viewModel.selectTab(AetherTab.CONNECT)
-                            initiateVpnConnect(node.copy(protocol = uiState.preferences.preferredProtocol))
-                        },
-                        onToggleFavorite = viewModel::toggleFavorite,
-                        onPingSingleNode = viewModel::pingSingleNode,
-                        onPingAllNodes = viewModel::pingAllNodes,
-                        onSyncPublicApi = { viewModel.syncLivePublicNodes(silent = false) },
-                        onOpenAddCustomModal = { viewModel.setShowAddCustomNodeModal(true) },
-                        onInspectNodeConfig = { node -> viewModel.inspectNodeConfig(node) }
-                    )
-                }
-
-                AetherTab.AUDIT -> {
-                    OpenSourceAuditScreen(
-                        uiState = uiState,
-                        onSelectDns = viewModel::updateDnsServer,
-                        onToggleSafeSplitTunnel = viewModel::updateSafeSplitTunnel,
-                        onToggleAutoReconnect = viewModel::updateAutoReconnect,
-                        onClearLogs = viewModel::clearAuditLogs,
-                        onShowCopiedFeedback = {
-                            AetherVpnStateBus.appendLog("AUDIT", "Copied audit logs to clipboard.")
-                        }
-                    )
-                }
-            }
-
-            // Floating Banner Feedback Pill
-            AnimatedVisibility(
-                visible = uiState.bannerFeedback != null,
-                enter = fadeIn(),
-                exit = fadeOut(),
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(horizontal = 20.dp, vertical = 12.dp)
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = MaterialTheme.colorScheme.inverseSurface,
-                    shadowElevation = 6.dp
-                ) {
-                    Text(
-                        text = uiState.bannerFeedback.orEmpty(),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.inverseOnSurface,
-                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp)
-                    )
-                }
-            }
-        }
-    }
-
-    // Modal 1: Inspect Node OpenVPN / Cryptographic Configuration Dialog
-    uiState.inspectedNode?.let { inspected ->
-        AlertDialog(
-            onDismissRequest = { viewModel.inspectNodeConfig(null) },
-            title = {
-                Text(
-                    text = "${inspected.flagEmoji} ${inspected.cityName} Relay Config",
-                    style = MaterialTheme.typography.titleLarge
                 )
             },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "Host: ${inspected.hostName}\nEndpoint: ${inspected.ipAddress}:${inspected.port}\nOperator: ${inspected.operatorName}",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
+            bottomBar = {
+                // Clean 2-Tab iPhone Glass Bottom Navigation Bar (Connect & Servers only)
+                NavigationBar(
+                    windowInsets = WindowInsets.navigationBars,
+                    containerColor = MaterialTheme.colorScheme.surface.copy(
+                        alpha = if (uiState.preferences.isDarkTheme) 0.78f else 0.85f
+                    ),
+                    tonalElevation = 0.dp
+                ) {
+                    AetherTab.entries.forEach { tab ->
+                        val selected = uiState.activeTab == tab
+                        NavigationBarItem(
+                            selected = selected,
+                            onClick = { viewModel.selectTab(tab) },
+                            icon = {
+                                Icon(
+                                    imageVector = when (tab) {
+                                        AetherTab.CONNECT -> if (selected) Icons.Filled.PowerSettingsNew else Icons.Outlined.PowerSettingsNew
+                                        AetherTab.NODES -> if (selected) Icons.Filled.Public else Icons.Outlined.Public
+                                    },
+                                    contentDescription = tab.label
+                                )
+                            },
+                            label = {
+                                Text(
+                                    text = tab.label,
+                                    style = MaterialTheme.typography.labelLarge.copy(
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                                    )
+                                )
+                            },
+                            modifier = Modifier.testTag("nav_tab_${tab.route}")
+                        )
+                    }
+                }
+            }
+        ) { innerPadding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+            ) {
+                when (uiState.activeTab) {
+                    AetherTab.CONNECT -> {
+                        ConnectScreen(
+                            uiState = uiState,
+                            onToggleConnection = {
+                                val currentStatus = uiState.telemetry.status
+                                if (currentStatus == TunnelConnectionStatus.CONNECTED ||
+                                    currentStatus == TunnelConnectionStatus.CONNECTING
+                                ) {
+                                    viewModel.stopVpnService(context)
+                                } else {
+                                    initiateVpnConnect(
+                                        uiState.selectedNode,
+                                        !uiState.isAutoFastestMode
+                                    )
+                                }
+                            },
+                            onConnectSmartFastest = {
+                                val fastest = viewModel.enableAutoFastestModeAndGetNode()
+                                initiateVpnConnect(fastest, false)
+                            },
+                            onOpenNodeSelector = {
+                                viewModel.selectTab(AetherTab.NODES)
+                            }
+                        )
+                    }
+
+                    AetherTab.NODES -> {
+                        NodeListScreen(
+                            uiState = uiState,
+                            onSearchQueryChange = viewModel::updateSearchQuery,
+                            onSelectRegion = viewModel::selectRegion,
+                            onSelectSortOption = viewModel::selectSortOption,
+                            onSelectAutoFastest = {
+                                val fastest = viewModel.enableAutoFastestModeAndGetNode()
+                                initiateVpnConnect(fastest, false)
+                            },
+                            onSelectAndConnectNode = { node ->
+                                val chosenNode = node.copy(protocol = uiState.preferences.preferredProtocol)
+                                viewModel.selectManualNode(chosenNode)
+                                initiateVpnConnect(chosenNode, true)
+                            },
+                            onToggleFavorite = viewModel::toggleFavorite,
+                            onSyncPublicApi = { viewModel.syncLivePublicNodes(silent = false) },
+                            onOpenAddCustomModal = { viewModel.setShowAddCustomNodeModal(true) }
+                        )
+                    }
+                }
+
+                // Floating Glass Banner Feedback Pill
+                AnimatedVisibility(
+                    visible = uiState.bannerFeedback != null,
+                    enter = fadeIn(),
+                    exit = fadeOut(),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(horizontal = 20.dp, vertical = 12.dp)
+                ) {
                     Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                        shape = RoundedCornerShape(50),
+                        color = MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.92f),
+                        shadowElevation = 6.dp
                     ) {
                         Text(
-                            text = inspected.openVpnConfigPreview.ifEmpty {
-                                "client\ndev tun\nremote ${inspected.ipAddress} ${inspected.port}\ncipher AES-256-GCM"
-                            },
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontFamily = JetBrainsMonoFontFamily
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp)
+                            text = uiState.bannerFeedback.orEmpty(),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.inverseOnSurface,
+                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp)
                         )
                     }
                 }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        clipboardManager.setText(AnnotatedString(inspected.openVpnConfigPreview))
-                        viewModel.inspectNodeConfig(null)
-                    },
-                    modifier = Modifier.testTag("copy_ovpn_config_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.ContentCopy,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Copy .ovpn")
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = { viewModel.inspectNodeConfig(null) },
-                    modifier = Modifier.testTag("close_inspect_dialog_button")
-                ) {
-                    Text("Close")
-                }
             }
-        )
+        }
+
+        // Animated Startup Splash Screen with "A" VPN Logo & "Made with love by Ashir ♥️"
+        AnimatedVisibility(
+            visible = showStartupSplash,
+            enter = fadeIn(tween(220)),
+            exit = fadeOut(tween(450))
+        ) {
+            AVpnSplashScreen(
+                onDismiss = { showStartupSplash = false }
+            )
+        }
     }
 
-    // Modal 2: Add Custom Free Community Relay Node Dialog
+    // Add Custom Server Modal
     if (uiState.showAddCustomNodeModal) {
         AddCustomNodeDialog(
             onDismiss = { viewModel.setShowAddCustomNodeModal(false) },
@@ -463,6 +418,159 @@ fun AetherNodeApp(
     }
 }
 
+/**
+ * Ultra-Lightweight iOS Glassmorphic Mesh Gradient Background.
+ */
+@Composable
+private fun IosMeshBackdrop(isDark: Boolean) {
+    val bgColor = if (isDark) Color(0xFF080E1A) else Color(0xFFEAF2FF)
+    Canvas(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(bgColor)
+    ) {
+        // Top-left cyan/blue glass orb glow
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    SkyBluePrimary.copy(alpha = if (isDark) 0.22f else 0.25f),
+                    Color.Transparent
+                ),
+                center = Offset(size.width * 0.18f, size.height * 0.14f),
+                radius = size.minDimension * 0.72f
+            ),
+            radius = size.minDimension * 0.72f,
+            center = Offset(size.width * 0.18f, size.height * 0.14f)
+        )
+
+        // Center-right warm fire glass orb glow
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    Color(0xFFFF5E1A).copy(alpha = if (isDark) 0.16f else 0.15f),
+                    Color.Transparent
+                ),
+                center = Offset(size.width * 0.85f, size.height * 0.42f),
+                radius = size.minDimension * 0.68f
+            ),
+            radius = size.minDimension * 0.68f,
+            center = Offset(size.width * 0.85f, size.height * 0.42f)
+        )
+    }
+}
+
+/**
+ * Startup Splash Screen featuring the "A" VPN Logo, Fire Glow, and "Made with love by Ashir ♥️" at the bottom.
+ */
+@Composable
+private fun AVpnSplashScreen(
+    onDismiss: () -> Unit
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "splash_glow")
+    val logoPulse by infiniteTransition.animateFloat(
+        initialValue = 0.96f,
+        targetValue = 1.05f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(900, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "splash_logo_pulse"
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        Color(0xFF070D19),
+                        Color(0xFF0E1A32),
+                        Color(0xFF080E1A)
+                    )
+                )
+            )
+            .testTag("startup_splash_screen"),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.padding(horizontal = 32.dp)
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(144.dp)
+                    .scale(logoPulse)
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = Color(0xFFFF5E1A).copy(alpha = 0.22f),
+                    modifier = Modifier.size(144.dp)
+                ) {}
+
+                Image(
+                    painter = painterResource(id = R.drawable.img_avpn_logo_1794127481273),
+                    contentDescription = "A VPN Logo",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(116.dp)
+                        .clip(RoundedCornerShape(28.dp))
+                )
+            }
+
+            Spacer(modifier = Modifier.height(22.dp))
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.LocalFireDepartment,
+                    contentDescription = null,
+                    tint = Color(0xFFFF5E1A),
+                    modifier = Modifier.size(28.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = stringResource(R.string.app_name),
+                    style = MaterialTheme.typography.displayMedium.copy(
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color.White
+                    )
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+                text = "Ultra-Fast Worldwide Glass VPN",
+                style = MaterialTheme.typography.bodyLarge,
+                color = Color.White.copy(alpha = 0.75f)
+            )
+        }
+
+        // Bottom Credit Pill: "Made with love by Ashir ♥️"
+        Surface(
+            onClick = onDismiss,
+            shape = RoundedCornerShape(50),
+            color = Color.White.copy(alpha = 0.10f),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.24f)),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 44.dp)
+                .testTag("splash_made_by_ashir_badge")
+        ) {
+            Text(
+                text = stringResource(R.string.made_by_ashir),
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.4.sp
+                ),
+                color = Color.White,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 11.dp)
+            )
+        }
+    }
+}
+
 @Composable
 private fun AddCustomNodeDialog(
     onDismiss: () -> Unit,
@@ -473,13 +581,13 @@ private fun AddCustomNodeDialog(
     var cityName by remember { mutableStateOf("Helsinki") }
     var ipAddress by remember { mutableStateOf("95.216.144.18") }
     var portText by remember { mutableStateOf("443") }
-    var operatorName by remember { mutableStateOf("Community Open Relay") }
+    var operatorName by remember { mutableStateOf("Custom Server") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                text = "Add Free Community Relay Node",
+                text = "Add Custom Server",
                 style = MaterialTheme.typography.titleLarge
             )
         },
@@ -537,7 +645,7 @@ private fun AddCustomNodeDialog(
                 OutlinedTextField(
                     value = operatorName,
                     onValueChange = { operatorName = it },
-                    label = { Text("Operator / Maintainer") },
+                    label = { Text("Label") },
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -553,7 +661,7 @@ private fun AddCustomNodeDialog(
                 },
                 modifier = Modifier.testTag("confirm_add_custom_node_button")
             ) {
-                Text("Add & Select")
+                Text("Add & Connect")
             }
         },
         dismissButton = {

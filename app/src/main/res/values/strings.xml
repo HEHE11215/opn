@@ -1,21 +1,17 @@
 <resources>
-    <string name="app_name">AetherNode</string>
-    <string name="tagline_open_source">Open-Source Worldwide Free VPN</string>
-    <string name="status_disconnected">Unprotected Connection</string>
-    <string name="status_connecting">Handshaking Encrypted Tunnel…</string>
-    <string name="status_connected">Encrypted Tunnel Active</string>
-    <string name="status_disconnecting">Closing Secure Tunnel…</string>
+    <string name="app_name">A VPN</string>
+    <string name="tagline_open_source">Fast Worldwide Secure Tunnel</string>
+    <string name="made_by_ashir">Made with love by Ashir ♥️</string>
+    <string name="status_disconnected">Not Connected</string>
+    <string name="status_connecting">Igniting Secure Tunnel…</string>
+    <string name="status_connected">Connected &amp; Protected</string>
+    <string name="status_disconnecting">Disconnecting…</string>
     <string name="btn_tap_to_connect">Tap to Connect</string>
     <string name="btn_tap_to_disconnect">Tap to Disconnect</string>
-    <string name="btn_smart_fastest">Quick Connect Fastest Node</string>
+    <string name="btn_smart_fastest">Auto-Connect Fastest</string>
     <string name="tab_connect">Connect</string>
-    <string name="tab_nodes">Worldwide Nodes</string>
-    <string name="tab_audit">Open-Source Audit</string>
-    <string name="search_nodes_hint">Search country, city, IP, or operator…</string>
-    <string name="ping_all_nodes">Test All Latencies</string>
-    <string name="refresh_public_nodes">Sync Public Relay API</string>
-    <string name="add_custom_node">Add Custom Node</string>
-    <string name="notification_channel_name">AetherNode VPN Tunnel Status</string>
-    <string name="notification_channel_desc">Displays active encrypted VPN session telemetry and quick disconnect control</string>
-    <string name="open_source_license_badge">GPLv3 / Apache-2.0 Open-Source Core • Zero Tracking</string>
+    <string name="tab_nodes">Servers</string>
+    <string name="search_nodes_hint">Search country…</string>
+    <string name="notification_channel_name">A VPN Active Status</string>
+    <string name="notification_channel_desc">Shows real-time connection status and quick disconnect button</string>
 </resources>

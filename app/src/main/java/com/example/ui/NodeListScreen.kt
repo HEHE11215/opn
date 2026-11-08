@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -34,8 +35,6 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -65,11 +64,12 @@ import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.SkyBluePrimary
 import java.util.Locale
 
+private val FireAccent = Color(0xFFFF5E1A)
+
 /**
- * Clean, Consumer-Optimized Locations Screen:
- * - Shows strictly ONE entry per Country (auto-selecting the fastest server for each country).
- * - Includes a featured "⚡ Auto Fastest Server" card at the top.
- * - Clean single-line Sort & Filter controls with zero text wrapping or squished buttons.
+ * Lightweight iPhone Glassmorphic Locations Screen:
+ * - Strictly ONE card per country (fastest server automatically chosen for each country).
+ * - Tapping any country locks onto that exact country and connects immediately!
  */
 @Composable
 fun NodeListScreen(
@@ -80,13 +80,12 @@ fun NodeListScreen(
     onSelectAutoFastest: () -> Unit,
     onSelectAndConnectNode: (VpnNode) -> Unit,
     onToggleFavorite: (String) -> Unit,
-    onPingSingleNode: (VpnNode) -> Unit,
-    onPingAllNodes: () -> Unit,
     onSyncPublicApi: () -> Unit,
     onOpenAddCustomModal: () -> Unit,
-    onInspectNodeConfig: (VpnNode) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val isDark = uiState.preferences.isDarkTheme
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -100,7 +99,7 @@ fun NodeListScreen(
         ) {
             Spacer(modifier = Modifier.height(6.dp))
 
-            // 1. Search Bar + Refresh & Add Action Buttons in One Clean Row
+            // 1. iPhone Glass Search Bar + Refresh & Add Server Buttons
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -140,26 +139,27 @@ fun NodeListScreen(
                         }
                     } else null,
                     singleLine = true,
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(16.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surface,
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                        focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.75f),
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f),
+                        focusedBorderColor = SkyBluePrimary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
                     )
                 )
 
                 // Auto-Refresh Live Servers Button
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                IosGlassCard(
+                    isDark = isDark,
+                    cornerRadius = 16.dp,
                     modifier = Modifier.size(52.dp)
                 ) {
                     IconButton(
                         onClick = onSyncPublicApi,
                         enabled = !uiState.isSyncingApi,
-                        modifier = Modifier.testTag("refresh_nodes_button")
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .testTag("refresh_nodes_button")
                     ) {
                         if (uiState.isSyncingApi) {
                             CircularProgressIndicator(
@@ -170,26 +170,29 @@ fun NodeListScreen(
                             Icon(
                                 imageVector = Icons.Default.Refresh,
                                 contentDescription = "Refresh fastest servers",
-                                tint = MaterialTheme.colorScheme.primary
+                                tint = SkyBluePrimary
                             )
                         }
                     }
                 }
 
                 // Add Custom Server Button
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
+                IosGlassCard(
+                    isDark = isDark,
+                    cornerRadius = 16.dp,
+                    accentGlowColor = SkyBluePrimary,
                     modifier = Modifier.size(52.dp)
                 ) {
                     IconButton(
                         onClick = onOpenAddCustomModal,
-                        modifier = Modifier.testTag("add_custom_node_button")
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .testTag("add_custom_node_button")
                     ) {
                         Icon(
                             imageVector = Icons.Default.Add,
                             contentDescription = "Add custom server",
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                            tint = SkyBluePrimary
                         )
                     }
                 }
@@ -217,8 +220,8 @@ fun NodeListScreen(
                             )
                         },
                         colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                            selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            selectedContainerColor = SkyBluePrimary.copy(alpha = 0.18f),
+                            selectedLabelColor = SkyBluePrimary
                         ),
                         modifier = Modifier.testTag("region_chip_${region.name.lowercase(Locale.US)}")
                     )
@@ -227,7 +230,7 @@ fun NodeListScreen(
 
             Spacer(modifier = Modifier.height(6.dp))
 
-            // 3. Clean Single-Line Sort Order Bar (Never wraps!)
+            // 3. Clean Single-Line Sort Order Bar
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -246,10 +249,13 @@ fun NodeListScreen(
                     Surface(
                         shape = RoundedCornerShape(10.dp),
                         color = if (active) {
-                            MaterialTheme.colorScheme.secondaryContainer
+                            SkyBluePrimary.copy(alpha = 0.18f)
                         } else {
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
                         },
+                        border = if (active) {
+                            BorderStroke(1.dp, SkyBluePrimary.copy(alpha = 0.5f))
+                        } else null,
                         modifier = Modifier
                             .clip(RoundedCornerShape(10.dp))
                             .clickable { onSelectSortOption(sortOpt) }
@@ -261,7 +267,7 @@ fun NodeListScreen(
                                 fontWeight = if (active) FontWeight.Bold else FontWeight.Medium
                             ),
                             color = if (active) {
-                                MaterialTheme.colorScheme.onSecondaryContainer
+                                SkyBluePrimary
                             } else {
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             },
@@ -284,11 +290,11 @@ fun NodeListScreen(
             contentPadding = PaddingValues(vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Featured "Auto Fastest Server" Card at top
             item(key = "auto_fastest_header_card") {
                 AutoFastestLocationCard(
                     isSelected = uiState.isAutoFastestMode,
                     fastestNode = uiState.filteredNodes.firstOrNull() ?: uiState.selectedNode,
+                    isDark = isDark,
                     onClick = onSelectAutoFastest
                 )
             }
@@ -322,7 +328,7 @@ fun NodeListScreen(
                     key = { it.countryCode + "_" + it.id }
                 ) { node ->
                     val isSelected = !uiState.isAutoFastestMode &&
-                        (uiState.selectedNode.countryCode == node.countryCode)
+                        (uiState.selectedNode.countryCode.equals(node.countryCode, ignoreCase = true))
                     val isFavorite = uiState.preferences.favoriteNodeIds.contains(node.countryCode) ||
                         uiState.preferences.favoriteNodeIds.contains(node.id)
 
@@ -330,6 +336,7 @@ fun NodeListScreen(
                         node = node,
                         isSelected = isSelected,
                         isFavorite = isFavorite,
+                        isDark = isDark,
                         onSelectNode = { onSelectAndConnectNode(node) },
                         onToggleFavorite = { onToggleFavorite(node.countryCode) }
                     )
@@ -343,26 +350,17 @@ fun NodeListScreen(
 private fun AutoFastestLocationCard(
     isSelected: Boolean,
     fastestNode: VpnNode,
+    isDark: Boolean,
     onClick: () -> Unit
 ) {
-    Card(
+    IosGlassCard(
+        isDark = isDark,
+        cornerRadius = 20.dp,
+        accentGlowColor = if (isSelected) SkyBluePrimary else null,
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .testTag("auto_fastest_location_card"),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isSelected) {
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
-            } else {
-                MaterialTheme.colorScheme.surface
-            }
-        ),
-        border = BorderStroke(
-            width = if (isSelected) 1.5.dp else 1.dp,
-            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+            .testTag("auto_fastest_location_card")
     ) {
         Row(
             modifier = Modifier
@@ -372,7 +370,7 @@ private fun AutoFastestLocationCard(
         ) {
             Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = SkyBluePrimary.copy(alpha = 0.14f),
+                color = SkyBluePrimary.copy(alpha = 0.16f),
                 modifier = Modifier.size(46.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
@@ -390,7 +388,9 @@ private fun AutoFastestLocationCard(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "Auto Fastest Server",
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Bold
+                    ),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -411,7 +411,7 @@ private fun AutoFastestLocationCard(
                 shape = RoundedCornerShape(12.dp),
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isSelected) EmeraldConnected else MaterialTheme.colorScheme.primary
+                    containerColor = if (isSelected) EmeraldConnected else SkyBluePrimary
                 ),
                 modifier = Modifier.height(38.dp)
             ) {
@@ -430,31 +430,18 @@ private fun CountryServerRowCard(
     node: VpnNode,
     isSelected: Boolean,
     isFavorite: Boolean,
+    isDark: Boolean,
     onSelectNode: () -> Unit,
     onToggleFavorite: () -> Unit
 ) {
-    Card(
+    IosGlassCard(
+        isDark = isDark,
+        cornerRadius = 20.dp,
+        accentGlowColor = if (isSelected) FireAccent else null,
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onSelectNode)
-            .testTag("node_card_${node.id}"),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isSelected) {
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
-            } else {
-                MaterialTheme.colorScheme.surface
-            }
-        ),
-        border = BorderStroke(
-            width = if (isSelected) 1.5.dp else 1.dp,
-            color = if (isSelected) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                MaterialTheme.colorScheme.outline.copy(alpha = 0.65f)
-            }
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+            .testTag("node_card_${node.id}")
     ) {
         Row(
             modifier = Modifier
@@ -465,7 +452,7 @@ private fun CountryServerRowCard(
             // 1. Country Flag Box
             Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
                 modifier = Modifier.size(46.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
@@ -482,7 +469,9 @@ private fun CountryServerRowCard(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = node.countryName,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Bold
+                    ),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -532,13 +521,13 @@ private fun CountryServerRowCard(
 
             Spacer(modifier = Modifier.width(4.dp))
 
-            // 4. Clean, Well-Proportioned Connect Button (Never squished!)
+            // 4. Clean Connect Button that locks onto this exact country
             Button(
                 onClick = onSelectNode,
                 shape = RoundedCornerShape(12.dp),
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isSelected) EmeraldConnected else MaterialTheme.colorScheme.primary
+                    containerColor = if (isSelected) FireAccent else SkyBluePrimary
                 ),
                 modifier = Modifier
                     .height(38.dp)
@@ -546,17 +535,25 @@ private fun CountryServerRowCard(
             ) {
                 if (isSelected) {
                     Icon(
-                        imageVector = Icons.Default.Check,
+                        imageVector = Icons.Default.LocalFireDepartment,
                         contentDescription = null,
+                        tint = Color.White,
                         modifier = Modifier.size(15.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = "Active",
+                        text = "Locked",
                         style = MaterialTheme.typography.labelLarge.copy(color = Color.White),
                         maxLines = 1
                     )
                 } else {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
                     Text(
                         text = "Connect",
                         style = MaterialTheme.typography.labelLarge.copy(color = Color.White),

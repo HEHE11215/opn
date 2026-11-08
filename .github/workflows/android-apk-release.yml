@@ -1,4 +1,4 @@
-name: Build & Publish Android APK Release
+name: Build & Publish Signed APK Release
 
 on:
   push:
@@ -9,22 +9,17 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
-    inputs:
-      release_notes:
-        description: "Optional custom note to highlight in the GitHub Release"
-        required: false
-        default: "Automated build & release from latest push"
 
 permissions:
   contents: write
 
 jobs:
   build-and-release-apk:
-    name: Assemble Signed APK & Create GitHub Release
+    name: Build Signed APK & Publish Release
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository (Full History for Changelog)
+      - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -37,9 +32,6 @@ jobs:
 
       - name: Configure Android SDK & Accept Licenses
         run: |
-          # ubuntu-latest runners include Android SDK at $ANDROID_HOME (/usr/local/lib/android/sdk).
-          # Accept all Android SDK licenses directly so Gradle can auto-install compileSdk 36.1
-          # without triggering the deprecated 'tools' package bug in setup-android.
           export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           export ANDROID_SDK_ROOT="$ANDROID_HOME"
           echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
@@ -59,18 +51,16 @@ jobs:
         with:
           gradle-version: "9.3.1"
 
-      - name: Prepare Environment (.env) & Signing Keystores
+      - name: Prepare Environment (.env) & Release Signing Keystore
         env:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          # 1. Ensure .env file exists for Secrets Gradle Plugin
           if [ ! -f ".env" ]; then
             cp .env.example .env
           fi
 
-          # 2. Ensure debug.keystore exists for debug builds
           if [ ! -f "debug.keystore" ]; then
             keytool -genkeypair -v \
               -keystore debug.keystore \
@@ -83,39 +73,35 @@ jobs:
               -dname "CN=Android Debug,O=Android,C=US"
           fi
 
-          # 3. Configure release keystore (from GitHub Secrets if provided, or auto-generate self-signed release key)
           if [ -n "$RELEASE_KEYSTORE_BASE64" ]; then
             echo "$RELEASE_KEYSTORE_BASE64" | base64 --decode > my-upload-key.jks
             echo "KEYSTORE_PATH=${GITHUB_WORKSPACE}/my-upload-key.jks" >> $GITHUB_ENV
             echo "STORE_PASSWORD=${STORE_PASSWORD}" >> $GITHUB_ENV
             echo "KEY_PASSWORD=${KEY_PASSWORD}" >> $GITHUB_ENV
-            echo "SIGNING_MODE=Production Repository Secret Keystore" >> $GITHUB_ENV
           else
             keytool -genkeypair -v \
               -keystore my-upload-key.jks \
-              -storepass aethernode_release_pass \
+              -storepass avpn_release_pass \
               -alias upload \
-              -keypass aethernode_release_pass \
+              -keypass avpn_release_pass \
               -keyalg RSA \
               -keysize 2048 \
               -validity 10000 \
-              -dname "CN=AetherNode OpenSource VPN,OU=Community,O=AetherNode,C=US"
+              -dname "CN=A VPN,OU=Ashir,O=AVPN,C=US"
             echo "KEYSTORE_PATH=${GITHUB_WORKSPACE}/my-upload-key.jks" >> $GITHUB_ENV
-            echo "STORE_PASSWORD=aethernode_release_pass" >> $GITHUB_ENV
-            echo "KEY_PASSWORD=aethernode_release_pass" >> $GITHUB_ENV
-            echo "SIGNING_MODE=Auto-Generated Self-Signed Release Keystore" >> $GITHUB_ENV
+            echo "STORE_PASSWORD=avpn_release_pass" >> $GITHUB_ENV
+            echo "KEY_PASSWORD=avpn_release_pass" >> $GITHUB_ENV
           fi
 
-      - name: Build Signed Release APK, Debug APK & Release App Bundle (AAB)
+      - name: Build Signed Release APK Only
         run: |
-          gradle :app:assembleRelease :app:assembleDebug :app:bundleRelease --no-daemon
+          gradle :app:assembleRelease --no-daemon
 
-      - name: Package Artifacts, Compute Checksums & Generate Full Release Notes
+      - name: Package Signed APK & Generate Release Notes
         id: meta
         run: |
           mkdir -p release-assets
 
-          # Determine semantic release version & tag
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             VERSION_TAG="${GITHUB_REF#refs/tags/}"
           else
@@ -127,103 +113,46 @@ jobs:
           echo "version_tag=${VERSION_TAG}" >> $GITHUB_OUTPUT
           echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
 
-          # Copy & rename outputs with version tag
-          RELEASE_APK_OUT="release-assets/AetherNode-${VERSION_TAG}-release-signed.apk"
-          DEBUG_APK_OUT="release-assets/AetherNode-${VERSION_TAG}-debug.apk"
-          RELEASE_AAB_OUT="release-assets/AetherNode-${VERSION_TAG}-release.aab"
-
+          RELEASE_APK_OUT="release-assets/AVPN-${VERSION_TAG}-signed.apk"
           cp app/build/outputs/apk/release/app-release.apk "${RELEASE_APK_OUT}"
-          cp app/build/outputs/apk/debug/app-debug.apk "${DEBUG_APK_OUT}"
-          if [ -f app/build/outputs/bundle/release/app-release.aab ]; then
-            cp app/build/outputs/bundle/release/app-release.aab "${RELEASE_AAB_OUT}"
-          fi
-
-          # Compute SHA-256 & MD5 Checksums
-          cd release-assets
-          sha256sum * > SHA256SUMS.txt
-          md5sum *.apk > MD5SUMS.txt
-          cd ..
 
           REL_SIZE=$(du -h "${RELEASE_APK_OUT}" | cut -f1)
-          DBG_SIZE=$(du -h "${DEBUG_APK_OUT}" | cut -f1)
           REL_SHA256=$(sha256sum "${RELEASE_APK_OUT}" | awk '{print $1}')
-          DBG_SHA256=$(sha256sum "${DEBUG_APK_OUT}" | awk '{print $1}')
 
-          # Generate recent commit changelog
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           if [ -n "$PREV_TAG" ]; then
-            CHANGELOG=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (\`%h\` by %an)" --no-merges)
+            CHANGELOG=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (\`%h\`)" --no-merges)
           else
-            CHANGELOG=$(git log -n 15 --pretty=format:"- %s (\`%h\` by %an)" --no-merges)
+            CHANGELOG=$(git log -n 10 --pretty=format:"- %s (\`%h\`)" --no-merges)
           fi
           if [ -z "$CHANGELOG" ]; then
-            CHANGELOG="- Automated build from commit \`${SHORT_SHA}\`"
+            CHANGELOG="- Automated signed APK release from commit \`${SHORT_SHA}\`"
           fi
 
           cat <<EOF > RELEASE_NOTES.md
-          ## 🛡️ AetherNode VPN — Release \`${VERSION_TAG}\`
+          ## 🔥 A VPN — Release \`${VERSION_TAG}\`
 
-          **AetherNode** is a lightweight, open-source worldwide VPN client powered by free public community relay nodes with one-tap encrypted connectivity and real-time TCP socket latency sweeps.
+          **Made with love by Ashir ♥️**
 
-          ---
+          | File | Size | SHA-256 |
+          | :--- | :--- | :--- |
+          | **\`AVPN-${VERSION_TAG}-signed.apk\`** | **${REL_SIZE}** | \`${REL_SHA256}\` |
 
-          ### 📦 Downloadable APK & Bundle Assets
+          - **Build Date:** \`${BUILD_DATE}\`
+          - **Android Compatibility:** Android 8.0 – Android 16+
 
-          | Artifact | File Name | Size | SHA-256 Checksum |
-          | :--- | :--- | :--- | :--- |
-          | **Signed Release APK** *(Recommended)* | \`AetherNode-${VERSION_TAG}-release-signed.apk\` | **${REL_SIZE}** | \`${REL_SHA256}\` |
-          | **Debug APK** | \`AetherNode-${VERSION_TAG}-debug.apk\` | **${DBG_SIZE}** | \`${DBG_SHA256}\` |
-          | **Checksums Manifest** | \`SHA256SUMS.txt\` / \`MD5SUMS.txt\` | — | Verified |
-
-          ---
-
-          ### 🔍 Build & Compatibility Metadata
-
-          - **Release Tag:** \`${VERSION_TAG}\`
-          - **Commit SHA:** \`${GITHUB_SHA}\` (\`${SHORT_SHA}\`)
-          - **Branch / Ref:** \`${GITHUB_REF_NAME}\`
-          - **Build Timestamp:** \`${BUILD_DATE}\`
-          - **Application ID:** \`com.aistudio.aethernode.vxkpmq\`
-          - **Android OS Support:** Android 8.0 Oreo (API 26) through Android 16 (API 36) *(minSdk 24)*
-          - **Tunnel Ciphers:** WireGuard-Mode (\`ChaCha20-Poly1305\`), OpenVPN UDP (\`AES-256-GCM\`), OpenVPN TCP/443 Stealth
-          - **Signing Mode:** ${SIGNING_MODE}
-
-          ---
-
-          ### 📝 Commit Changelog & What Changed
-
+          ### What's New
           ${CHANGELOG}
-
-          ---
-
-          ### 📲 Installation & Verification Instructions
-
-          1. Download **\`AetherNode-${VERSION_TAG}-release-signed.apk\`** from the **Assets** section below.
-          2. *(Optional)* Verify integrity on Linux/macOS/Termux:
-             \`\`\`bash
-             echo "${REL_SHA256}  AetherNode-${VERSION_TAG}-release-signed.apk" | sha256sum -c -
-             \`\`\`
-          3. Open the APK on your Android device (Android 8.0 – Android 16+) to install and tap the central shield orb to connect.
           EOF
 
-      - name: Upload Build Artifacts to Workflow Run
-        uses: actions/upload-artifact@v4
-        with:
-          name: AetherNode-${{ steps.meta.outputs.version_tag }}-APKs
-          path: release-assets/*
-
-      - name: Create GitHub Release with Full Details & Signed APKs
+      - name: Create GitHub Release (Signed APK Only)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.version_tag }}
-          name: "AetherNode VPN ${{ steps.meta.outputs.version_tag }} (${{ steps.meta.outputs.short_sha }})"
+          name: "A VPN ${{ steps.meta.outputs.version_tag }}"
           body_path: RELEASE_NOTES.md
           draft: false
           prerelease: false
           make_latest: "true"
           files: |
-            release-assets/AetherNode-${{ steps.meta.outputs.version_tag }}-release-signed.apk
-            release-assets/AetherNode-${{ steps.meta.outputs.version_tag }}-debug.apk
-            release-assets/AetherNode-${{ steps.meta.outputs.version_tag }}-release.aab
-            release-assets/SHA256SUMS.txt
-            release-assets/MD5SUMS.txt
+            release-assets/AVPN-${{ steps.meta.outputs.version_tag }}-signed.apk

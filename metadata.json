@@ -1,6 +1,6 @@
 {
-  "name": "AetherNode",
-  "description": "Lightweight, open-source worldwide VPN client powered by public community relay nodes with one-tap encrypted connectivity and real-time latency measurement.",
+  "name": "A VPN",
+  "description": "Ultra-lightweight iOS-glass worldwide VPN with blazing one-tap connectivity, real-time fire animation, and manual or smart server selection.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
