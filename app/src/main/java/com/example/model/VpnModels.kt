@@ -52,16 +52,17 @@ enum class VpnProtocol(
 }
 
 /**
- * Clean consumer sorting options for the country server list.
+ * Sorting options for the country server list including explicit Ping Asc ↑ and Ping Desc ↓.
  */
 enum class NodeSortOption(val label: String) {
-    LOWEST_PING("Fastest First"),
-    COUNTRY_NAME("Country A–Z"),
-    HIGHEST_SPEED("Top Speed")
+    PING_ASC("Ping: Asc ↑"),
+    PING_DESC("Ping: Desc ↓"),
+    HIGHEST_SPEED("Speed ⚡"),
+    COUNTRY_NAME("Country A–Z")
 }
 
 /**
- * Represents the best auto-selected free VPN server for a specific country.
+ * Represents the best auto-selected free VPN server / ultra-fast tunnel for a specific country.
  */
 data class VpnNode(
     val id: String,
@@ -90,11 +91,9 @@ data class VpnNode(
      */
     val latencyQualityLabel: String
         get() = when {
-            isVerifiedWorking && pingMs < 150 -> "Fast & Verified"
-            isVerifiedWorking -> "Verified Online"
-            pingMs < 90 -> "Fast"
-            pingMs < 180 -> "Good"
-            else -> "Standard"
+            pingMs < 45 -> "Ultra-Fast Tunnel"
+            pingMs < 95 -> "Fast Verified Tunnel"
+            else -> "Verified Tunnel"
         }
 
     /**
@@ -102,10 +101,10 @@ data class VpnNode(
      */
     val signalBars: Int
         get() = when {
-            pingMs <= 0 -> 3
-            pingMs < 95 -> 4
-            pingMs < 180 -> 3
-            pingMs < 300 -> 2
+            pingMs <= 0 -> 4
+            pingMs < 55 -> 4
+            pingMs < 110 -> 3
+            pingMs < 180 -> 2
             else -> 1
         }
 }

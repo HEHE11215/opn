@@ -28,14 +28,12 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -55,8 +53,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Favorite
@@ -68,12 +64,10 @@ import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.outlined.PowerSettingsNew
 import androidx.compose.material.icons.outlined.Public
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -104,10 +98,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -118,6 +110,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.model.TunnelConnectionStatus
 import com.example.model.VpnNode
 import com.example.ui.AetherTab
+import com.example.ui.AnimatedGifStyleAVpnLogo
 import com.example.ui.ConnectScreen
 import com.example.ui.IosGlassCard
 import com.example.ui.NodeListScreen
@@ -126,7 +119,6 @@ import com.example.ui.VpnPopupTone
 import com.example.ui.VpnUiState
 import com.example.ui.VpnViewModel
 import com.example.ui.theme.AetherNodeTheme
-import com.example.ui.theme.AmberHandshaking
 import com.example.ui.theme.EmeraldConnected
 import com.example.ui.theme.SkyBluePrimary
 import com.example.vpn.AetherVpnStateBus
@@ -177,12 +169,12 @@ fun AVpnRootApp(
     // Animated GIF-style boot sequence progression
     LaunchedEffect(showStartupSplash) {
         if (showStartupSplash) {
-            val steps = 22
+            val steps = 20
             for (i in 1..steps) {
                 bootProgress = i / steps.toFloat()
-                delay(90L)
+                delay(85L)
             }
-            delay(250L)
+            delay(220L)
             showStartupSplash = false
         }
     }
@@ -234,7 +226,6 @@ fun AVpnRootApp(
         }
     }
 
-    // Connects to the exact target node and explicitly preserves manual vs auto mode!
     val initiateVpnConnect: (VpnNode, Boolean) -> Unit = { nodeToConnect, isManual ->
         pendingNodeToConnect = nodeToConnect
         pendingIsManualSelection = isManual
@@ -255,10 +246,10 @@ fun AVpnRootApp(
         }
     }
 
-    // Auto-dismiss event popup after 3.8 seconds
+    // Auto-dismiss full-screen glass event popup after 2.6 seconds (or tap anywhere)
     LaunchedEffect(uiState.activePopup?.id) {
         if (uiState.activePopup != null) {
-            delay(3800L)
+            delay(2600L)
             viewModel.dismissPopup()
         }
     }
@@ -275,13 +266,10 @@ fun AVpnRootApp(
                 TopAppBar(
                     title = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Image(
-                                painter = painterResource(id = R.drawable.img_avpn_logo_1794127481273),
-                                contentDescription = "A VPN Logo",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .clip(RoundedCornerShape(11.dp))
+                            // Continuous 60 FPS GIF-Style Animated "A" Logo
+                            AnimatedGifStyleAVpnLogo(
+                                size = 40.dp,
+                                cornerRadius = 12.dp
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Column {
@@ -292,7 +280,7 @@ fun AVpnRootApp(
                                     )
                                 )
                                 Text(
-                                    text = "Fast Worldwide VPN • By Ashir ♥️",
+                                    text = "Ultra-Fast Tunnels • By Ashir ♥️",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
@@ -302,7 +290,7 @@ fun AVpnRootApp(
                         }
                     },
                     actions = {
-                        // Tappable "By Ashir ♥️" Developer Badge
+                        // Tappable "Ashir ♥️" Developer Badge
                         Surface(
                             onClick = { viewModel.setShowDeveloperCreditsModal(true) },
                             shape = RoundedCornerShape(50),
@@ -412,8 +400,10 @@ fun AVpnRootApp(
                                 }
                             },
                             onConnectSmartFastest = {
-                                val fastest = viewModel.enableAutoFastestModeAndGetNode()
-                                initiateVpnConnect(fastest, false)
+                                // Directly fetch latest & fastest live server available right now and connect!
+                                viewModel.fetchLatestAndConnectFastestNow { fastestNow ->
+                                    initiateVpnConnect(fastestNow, false)
+                                }
                             },
                             onOpenNodeSelector = {
                                 viewModel.selectTab(AetherTab.NODES)
@@ -430,9 +420,11 @@ fun AVpnRootApp(
                             onSearchQueryChange = viewModel::updateSearchQuery,
                             onSelectRegion = viewModel::selectRegion,
                             onSelectSortOption = viewModel::selectSortOption,
+                            onTogglePingSort = viewModel::togglePingSortOrder,
                             onSelectAutoFastest = {
-                                val fastest = viewModel.enableAutoFastestModeAndGetNode()
-                                initiateVpnConnect(fastest, false)
+                                viewModel.fetchLatestAndConnectFastestNow { fastestNow ->
+                                    initiateVpnConnect(fastestNow, false)
+                                }
                             },
                             onSelectAndConnectNode = { node ->
                                 val chosenNode = node.copy(protocol = uiState.preferences.preferredProtocol)
@@ -446,37 +438,66 @@ fun AVpnRootApp(
                         )
                     }
                 }
-
-                // Dynamic Island / iOS Glass Event Popup for Connect, Disconnect, Server Switch, & Theme!
-                AnimatedVisibility(
-                    visible = uiState.activePopup != null,
-                    enter = slideInVertically(
-                        initialOffsetY = { -it - 40 },
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioMediumBouncy,
-                            stiffness = Spring.StiffnessMediumLow
-                        )
-                    ) + scaleIn(
-                        initialScale = 0.88f,
-                        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy)
-                    ) + fadeIn(tween(220)),
-                    exit = slideOutVertically(
-                        targetOffsetY = { -it - 40 },
-                        animationSpec = tween(250)
-                    ) + scaleOut(targetScale = 0.90f) + fadeOut(tween(200)),
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                ) {
-                    uiState.activePopup?.let { popup ->
-                        AVpnGlassEventPopup(
-                            popup = popup,
-                            isDark = uiState.preferences.isDarkTheme,
-                            onDismiss = viewModel::dismissPopup
-                        )
-                    }
-                }
             }
+        }
+
+        // Full-Screen Optimized iPhone Glass Event Popup Overlay (Centered on Whole Screen!)
+        AnimatedVisibility(
+            visible = uiState.activePopup != null,
+            enter = fadeIn(tween(200)) + scaleIn(
+                initialScale = 0.86f,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessMediumLow
+                )
+            ),
+            exit = fadeOut(tween(180)) + scaleOut(targetScale = 0.92f),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            uiState.activePopup?.let { popup ->
+                AVpnFullScreenGlassPopupOverlay(
+                    popup = popup,
+                    isDark = uiState.preferences.isDarkTheme,
+                    onDismiss = viewModel::dismissPopup
+                )
+            }
+        }
+
+        // Full-Screen Optimized Developer Credits Glass Overlay
+        AnimatedVisibility(
+            visible = uiState.showDeveloperCreditsModal,
+            enter = fadeIn(tween(200)) + scaleIn(initialScale = 0.88f),
+            exit = fadeOut(tween(180)) + scaleOut(targetScale = 0.92f),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            AshirDeveloperCreditsFullScreenOverlay(
+                isDark = uiState.preferences.isDarkTheme,
+                onDismiss = { viewModel.setShowDeveloperCreditsModal(false) }
+            )
+        }
+
+        // Full-Screen Optimized Add Custom Tunnel Glass Overlay
+        AnimatedVisibility(
+            visible = uiState.showAddCustomNodeModal,
+            enter = fadeIn(tween(200)) + scaleIn(initialScale = 0.88f),
+            exit = fadeOut(tween(180)) + scaleOut(targetScale = 0.92f),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            AddCustomNodeFullScreenOverlay(
+                isDark = uiState.preferences.isDarkTheme,
+                onDismiss = { viewModel.setShowAddCustomNodeModal(false) },
+                onConfirmAdd = { country, code, city, ip, port, operator ->
+                    viewModel.addCustomCommunityNode(
+                        countryName = country,
+                        countryCode = code,
+                        cityName = city,
+                        ipAddress = ip,
+                        port = port,
+                        operatorName = operator,
+                        protocol = uiState.preferences.preferredProtocol
+                    )
+                }
+            )
         }
 
         // Animated GIF-Style Boot Splash Screen with "A" VPN Logo & "Made with love by Ashir ♥️"
@@ -491,31 +512,170 @@ fun AVpnRootApp(
             )
         }
     }
+}
 
-    // Modal 1: Ashir Developer Credits Showcase Popup
-    if (uiState.showDeveloperCreditsModal) {
-        AshirDeveloperCreditsDialog(
-            isDark = uiState.preferences.isDarkTheme,
-            onDismiss = { viewModel.setShowDeveloperCreditsModal(false) }
-        )
+/**
+ * Full-Screen Optimized iPhone Glass Event Popup Overlay.
+ * Covers the whole screen with a soft translucent scrim and centers a glowing glass card
+ * with GIF-style logo, flag badge, tunnel status, and "Made with love by Ashir ♥️".
+ */
+@Composable
+private fun AVpnFullScreenGlassPopupOverlay(
+    popup: VpnEventPopup,
+    isDark: Boolean,
+    onDismiss: () -> Unit
+) {
+    val accentColor = when (popup.tone) {
+        VpnPopupTone.CONNECTED -> EmeraldConnected
+        VpnPopupTone.CONNECTING -> FireOrange
+        VpnPopupTone.DISCONNECTED -> FireCrimson
+        VpnPopupTone.THEME -> SkyBluePrimary
+        VpnPopupTone.INFO -> SkyBluePrimary
     }
 
-    // Modal 2: Add Custom Server Modal
-    if (uiState.showAddCustomNodeModal) {
-        AddCustomNodeDialog(
-            onDismiss = { viewModel.setShowAddCustomNodeModal(false) },
-            onConfirmAdd = { country, code, city, ip, port, operator ->
-                viewModel.addCustomCommunityNode(
-                    countryName = country,
-                    countryCode = code,
-                    cityName = city,
-                    ipAddress = ip,
-                    port = port,
-                    operatorName = operator,
-                    protocol = uiState.preferences.preferredProtocol
+    val interactionSource = remember { MutableInteractionSource() }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.52f))
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onDismiss
+            )
+            .padding(horizontal = 24.dp)
+            .testTag("vpn_event_popup_card"),
+        contentAlignment = Alignment.Center
+    ) {
+        IosGlassCard(
+            isDark = isDark,
+            cornerRadius = 30.dp,
+            accentGlowColor = accentColor,
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 360.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {}
                 )
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Top Row: Animated GIF-Style Logo + Country/Event Emblem
+                Box(contentAlignment = Alignment.BottomEnd) {
+                    AnimatedGifStyleAVpnLogo(
+                        size = 72.dp,
+                        cornerRadius = 20.dp
+                    )
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.5.dp, accentColor),
+                        modifier = Modifier.size(30.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = popup.flagEmoji,
+                                fontSize = 15.sp
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Status Pill
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = accentColor.copy(alpha = 0.16f),
+                    border = BorderStroke(1.dp, accentColor.copy(alpha = 0.45f))
+                ) {
+                    Text(
+                        text = popup.detailBadge,
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            fontWeight = FontWeight.ExtraBold
+                        ),
+                        color = accentColor,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 5.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Text(
+                    text = popup.title,
+                    style = MaterialTheme.typography.headlineMedium.copy(
+                        fontWeight = FontWeight.ExtraBold
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Text(
+                    text = popup.subtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Developer Credit Badge inside Popup
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = FireCrimson.copy(alpha = 0.12f),
+                    border = BorderStroke(1.dp, FireCrimson.copy(alpha = 0.3f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Favorite,
+                            contentDescription = null,
+                            tint = FireCrimson,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = popup.badgeText,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Bold
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(18.dp))
+
+                Button(
+                    onClick = onDismiss,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = accentColor),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(46.dp)
+                        .testTag("dismiss_event_popup_button")
+                ) {
+                    Text(
+                        text = "Awesome",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    )
+                }
             }
-        )
+        }
     }
 }
 
@@ -574,7 +734,6 @@ private fun AnimatedGlassThemeToggle(
             .testTag("theme_toggle_button"),
         contentAlignment = Alignment.CenterStart
     ) {
-        // Background subtle icons
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -596,7 +755,6 @@ private fun AnimatedGlassThemeToggle(
             )
         }
 
-        // Sliding & rotating glowing thumb
         Surface(
             shape = CircleShape,
             color = if (isDark) SkyBluePrimary else FireOrange,
@@ -612,118 +770,6 @@ private fun AnimatedGlassThemeToggle(
                     contentDescription = "Toggle light or dark theme",
                     tint = Color.White,
                     modifier = Modifier.size(15.dp)
-                )
-            }
-        }
-    }
-}
-
-/**
- * iPhone Dynamic Island / Glass Event Popup Card shown whenever an action happens
- * (Connect, Disconnect, Server Switch, Theme Change, Sync).
- */
-@Composable
-private fun AVpnGlassEventPopup(
-    popup: VpnEventPopup,
-    isDark: Boolean,
-    onDismiss: () -> Unit
-) {
-    val accentColor = when (popup.tone) {
-        VpnPopupTone.CONNECTED -> EmeraldConnected
-        VpnPopupTone.CONNECTING -> FireOrange
-        VpnPopupTone.DISCONNECTED -> FireCrimson
-        VpnPopupTone.THEME -> SkyBluePrimary
-        VpnPopupTone.INFO -> SkyBluePrimary
-    }
-
-    IosGlassCard(
-        isDark = isDark,
-        cornerRadius = 24.dp,
-        accentGlowColor = accentColor,
-        modifier = Modifier
-            .fillMaxWidth()
-            .widthIn(max = 520.dp)
-            .testTag("vpn_event_popup_card")
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 13.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Surface(
-                shape = CircleShape,
-                color = accentColor.copy(alpha = 0.18f),
-                border = BorderStroke(1.dp, accentColor.copy(alpha = 0.45f)),
-                modifier = Modifier.size(42.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = when (popup.tone) {
-                            VpnPopupTone.CONNECTED -> Icons.Default.CheckCircle
-                            VpnPopupTone.CONNECTING -> Icons.Default.LocalFireDepartment
-                            VpnPopupTone.DISCONNECTED -> Icons.Default.PowerSettingsNew
-                            VpnPopupTone.THEME -> if (isDark) Icons.Default.DarkMode else Icons.Default.LightMode
-                            VpnPopupTone.INFO -> Icons.Default.Public
-                        },
-                        contentDescription = null,
-                        tint = accentColor,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.width(12.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text(
-                        text = popup.title,
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.ExtraBold
-                        ),
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-                    Surface(
-                        shape = RoundedCornerShape(50),
-                        color = accentColor.copy(alpha = 0.15f)
-                    ) {
-                        Text(
-                            text = popup.badgeText,
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 9.sp
-                            ),
-                            color = accentColor,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = popup.subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            IconButton(
-                onClick = onDismiss,
-                modifier = Modifier.size(32.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "Dismiss notification",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(16.dp)
                 )
             }
         }
@@ -805,7 +851,7 @@ private fun IosMeshBackdrop(isDark: Boolean) {
  * Animated GIF-Style Boot Splash Screen featuring:
  * - Multi-ring counter-rotating neon cyber-fire vortex & orbital arcs
  * - 18 rising glowing plasma/fire embers
- * - Pulsing "A" VPN emblem + holographic scan ring
+ * - 60 FPS `AnimatedGifStyleAVpnLogo` in the center
  * - Live animated progress bar & prominent "Made with love by Ashir ♥️" Developer Card
  */
 @Composable
@@ -846,7 +892,7 @@ private fun AVpnAnimatedBootScreen(
     )
 
     val logoPulse by infiniteTransition.animateFloat(
-        initialValue = 0.94f,
+        initialValue = 0.95f,
         targetValue = 1.06f,
         animationSpec = infiniteRepeatable(
             animation = tween(750, easing = FastOutSlowInEasing),
@@ -870,7 +916,6 @@ private fun AVpnAnimatedBootScreen(
             .testTag("startup_splash_screen"),
         contentAlignment = Alignment.Center
     ) {
-        // Background Rising Fire & Cyber Particles across the boot screen
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
@@ -894,7 +939,6 @@ private fun AVpnAnimatedBootScreen(
             verticalArrangement = Arrangement.Center,
             modifier = Modifier.padding(horizontal = 32.dp)
         ) {
-            // Animated Multi-Ring GIF-Style Cyber-Fire Emblem Box
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier.size(210.dp)
@@ -903,7 +947,6 @@ private fun AVpnAnimatedBootScreen(
                     val center = Offset(size.width / 2f, size.height / 2f)
                     val maxR = size.minDimension / 2f
 
-                    // Radial fire & cyan core glow
                     drawCircle(
                         brush = Brush.radialGradient(
                             colors = listOf(
@@ -918,7 +961,6 @@ private fun AVpnAnimatedBootScreen(
                         center = center
                     )
 
-                    // Outer rotating cyber-fire arc ring
                     val outerArcRadius = maxR * 0.88f
                     val outerTopLeft = Offset(center.x - outerArcRadius, center.y - outerArcRadius)
                     val outerSize = Size(outerArcRadius * 2f, outerArcRadius * 2f)
@@ -936,7 +978,6 @@ private fun AVpnAnimatedBootScreen(
                         )
                     }
 
-                    // Inner counter-rotating cyan glass plasma ring
                     val innerArcRadius = maxR * 0.74f
                     val innerTopLeft = Offset(center.x - innerArcRadius, center.y - innerArcRadius)
                     val innerSize = Size(innerArcRadius * 2f, innerArcRadius * 2f)
@@ -952,7 +993,6 @@ private fun AVpnAnimatedBootScreen(
                         )
                     }
 
-                    // Orbiting energy nodes
                     for (orbIdx in 0 until 6) {
                         val angleRad = ((outerRotation + orbIdx * 60f) * PI / 180.0).toFloat()
                         val ox = center.x + cos(angleRad) * outerArcRadius
@@ -965,20 +1005,11 @@ private fun AVpnAnimatedBootScreen(
                     }
                 }
 
-                // Pulsing "A" VPN Emblem in Center
-                Image(
-                    painter = painterResource(id = R.drawable.img_avpn_logo_1794127481273),
-                    contentDescription = "A VPN Animated Boot Logo",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .size(112.dp)
-                        .scale(logoPulse)
-                        .clip(RoundedCornerShape(28.dp))
-                        .border(
-                            width = 2.dp,
-                            brush = Brush.linearGradient(listOf(FireGold, SkyBluePrimary, FireOrange)),
-                            shape = RoundedCornerShape(28.dp)
-                        )
+                // 60 FPS Animated GIF-Style "A VPN" Logo
+                AnimatedGifStyleAVpnLogo(
+                    size = 114.dp,
+                    cornerRadius = 28.dp,
+                    modifier = Modifier.scale(logoPulse)
                 )
             }
 
@@ -1005,8 +1036,8 @@ private fun AVpnAnimatedBootScreen(
 
             Text(
                 text = when {
-                    progress < 0.45f -> "Igniting A VPN Fire Engine…"
-                    progress < 0.80f -> "Verifying Worldwide Relays…"
+                    progress < 0.45f -> "Igniting Ultra-Fast Tunnel Engine…"
+                    progress < 0.80f -> "Fetching Fastest Worldwide Servers…"
                     else -> "Ready • Engineered by Ashir ♥️"
                 },
                 style = MaterialTheme.typography.bodyLarge.copy(
@@ -1017,7 +1048,6 @@ private fun AVpnAnimatedBootScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Animated Boot Progress Bar
             LinearProgressIndicator(
                 progress = { progress },
                 color = FireOrange,
@@ -1070,81 +1100,86 @@ private fun AVpnAnimatedBootScreen(
 }
 
 /**
- * Dedicated Developer Credits Modal showcasing Ashir as the Creator & Architect of A VPN.
+ * Full-Screen Optimized Developer Credits Overlay showcasing Ashir ♥️.
  */
 @Composable
-private fun AshirDeveloperCreditsDialog(
+private fun AshirDeveloperCreditsFullScreenOverlay(
     isDark: Boolean,
     onDismiss: () -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Image(
-                    painter = painterResource(id = R.drawable.img_avpn_logo_1794127481273),
-                    contentDescription = "A VPN Logo",
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(12.dp))
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.56f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onDismiss
+            )
+            .padding(horizontal = 22.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        IosGlassCard(
+            isDark = isDark,
+            cornerRadius = 30.dp,
+            accentGlowColor = FireOrange,
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 380.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {}
                 )
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "Created by Ashir ♥️",
-                            style = MaterialTheme.typography.titleLarge.copy(
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Icon(
-                            imageVector = Icons.Default.Verified,
-                            contentDescription = "Verified",
-                            tint = SkyBluePrimary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                AnimatedGifStyleAVpnLogo(
+                    size = 76.dp,
+                    cornerRadius = 22.dp
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "Lead Developer & Architect of A VPN",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = "Created by Ashir ♥️",
+                        style = MaterialTheme.typography.headlineMedium.copy(
+                            fontWeight = FontWeight.ExtraBold
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Icon(
+                        imageVector = Icons.Default.Verified,
+                        contentDescription = "Verified",
+                        tint = SkyBluePrimary,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
-            }
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                IosGlassCard(
-                    isDark = isDark,
-                    cornerRadius = 18.dp,
-                    accentGlowColor = FireOrange,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.Code,
-                                contentDescription = null,
-                                tint = FireOrange,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Made with love by Ashir ♥️",
-                                style = MaterialTheme.typography.titleMedium.copy(
-                                    fontWeight = FontWeight.Bold
-                                )
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "A VPN is engineered for ultra-fast worldwide connectivity, featuring a lightweight iPhone Glass UI, Blazing Fire Tunnel Engine, and strict per-country server routing.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Text(
+                    text = "Founder & Lead Architect of A VPN",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = FireOrange
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Text(
+                    text = "Crafted with love by Ashir ♥️ to deliver ultra-fast worldwide VPN tunnels, zero-downtime WhatsApp & full-app support, and a lightweight iPhone Glass UI.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1166,9 +1201,9 @@ private fun AshirDeveloperCreditsDialog(
                                 tint = SkyBluePrimary,
                                 modifier = Modifier.size(16.dp)
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(5.dp))
                             Text(
-                                text = "TLS Verified",
+                                text = "100% App Uptime",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontWeight = FontWeight.Bold
                                 ),
@@ -1188,14 +1223,14 @@ private fun AshirDeveloperCreditsDialog(
                             horizontalArrangement = Arrangement.Center
                         ) {
                             Icon(
-                                imageVector = Icons.Default.LocalFireDepartment,
+                                imageVector = Icons.Default.Code,
                                 contentDescription = null,
                                 tint = FireOrange,
                                 modifier = Modifier.size(16.dp)
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(5.dp))
                             Text(
-                                text = "Fire Engine",
+                                text = "By Ashir ♥️",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontWeight = FontWeight.Bold
                                 ),
@@ -1204,23 +1239,37 @@ private fun AshirDeveloperCreditsDialog(
                         }
                     }
                 }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = onDismiss,
-                colors = ButtonDefaults.buttonColors(containerColor = FireOrange),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.testTag("close_developer_credits_button")
-            ) {
-                Text("Awesome ♥️", color = Color.White)
+
+                Spacer(modifier = Modifier.height(18.dp))
+
+                Button(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.buttonColors(containerColor = FireOrange),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(46.dp)
+                        .testTag("close_developer_credits_button")
+                ) {
+                    Text(
+                        text = "Awesome ♥️",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    )
+                }
             }
         }
-    )
+    }
 }
 
+/**
+ * Full-Screen Optimized Add Custom Tunnel Glass Overlay.
+ */
 @Composable
-private fun AddCustomNodeDialog(
+private fun AddCustomNodeFullScreenOverlay(
+    isDark: Boolean,
     onDismiss: () -> Unit,
     onConfirmAdd: (country: String, code: String, city: String, ip: String, port: Int, operator: String) -> Unit
 ) {
@@ -1229,18 +1278,47 @@ private fun AddCustomNodeDialog(
     var cityName by remember { mutableStateOf("Helsinki") }
     var ipAddress by remember { mutableStateOf("95.216.144.18") }
     var portText by remember { mutableStateOf("443") }
-    var operatorName by remember { mutableStateOf("Custom Server") }
+    var operatorName by remember { mutableStateOf("Custom Ultra Tunnel") }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(
-                text = "Add Custom Server",
-                style = MaterialTheme.typography.titleLarge
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.56f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onDismiss
             )
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            .padding(horizontal = 20.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        IosGlassCard(
+            isDark = isDark,
+            cornerRadius = 28.dp,
+            accentGlowColor = SkyBluePrimary,
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 390.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {}
+                )
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 22.dp, vertical = 22.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "Add Custom Ultra Tunnel",
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontWeight = FontWeight.ExtraBold
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = countryName,
@@ -1299,26 +1377,39 @@ private fun AddCustomNodeDialog(
                         .fillMaxWidth()
                         .testTag("custom_node_operator_input")
                 )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val parsedPort = portText.toIntOrNull() ?: 443
-                    onConfirmAdd(countryName, countryCode, cityName, ipAddress, parsedPort, operatorName)
-                },
-                modifier = Modifier.testTag("confirm_add_custom_node_button")
-            ) {
-                Text("Add & Connect")
-            }
-        },
-        dismissButton = {
-            OutlinedButton(
-                onClick = onDismiss,
-                modifier = Modifier.testTag("cancel_add_custom_node_button")
-            ) {
-                Text("Cancel")
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .testTag("cancel_add_custom_node_button")
+                    ) {
+                        Text("Cancel")
+                    }
+                    Button(
+                        onClick = {
+                            val parsedPort = portText.toIntOrNull() ?: 443
+                            onConfirmAdd(countryName, countryCode, cityName, ipAddress, parsedPort, operatorName)
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = SkyBluePrimary),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .testTag("confirm_add_custom_node_button")
+                    ) {
+                        Text("Add & Connect", color = Color.White)
+                    }
+                }
             }
         }
-    )
+    }
 }

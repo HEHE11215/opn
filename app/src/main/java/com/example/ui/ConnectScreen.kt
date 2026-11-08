@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -58,9 +59,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
@@ -88,6 +92,194 @@ import kotlin.math.sin
 private val FireOrange = Color(0xFFFF5E1A)
 private val FireGold = Color(0xFFFFB800)
 private val FireCrimson = Color(0xFFFF2A54)
+
+/**
+ * Animated GIF-Style Living "A VPN" Logo (`AnimatedGifStyleAVpnLogo`).
+ * Continuously renders a 60 FPS cyber-fire & liquid-glass "A" shield with:
+ * - Counter-rotating neon plasma & fire rings
+ * - Rising glowing flame embers
+ * - Custom vector-drawn 3D geometric "A" with an animated holographic shine sweep!
+ */
+@Composable
+fun AnimatedGifStyleAVpnLogo(
+    size: Dp = 44.dp,
+    cornerRadius: Dp = 13.dp,
+    modifier: Modifier = Modifier
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "gif_logo_anim")
+
+    val ringSpin by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2400, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "logo_ring_spin"
+    )
+
+    val flamePulse by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = (2f * PI).toFloat(),
+        animationSpec = infiniteRepeatable(
+            animation = tween(900, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "logo_flame_pulse"
+    )
+
+    val shineSweep by infiniteTransition.animateFloat(
+        initialValue = -0.4f,
+        targetValue = 1.4f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1600, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "logo_shine_sweep"
+    )
+
+    val shape = RoundedCornerShape(cornerRadius)
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .size(size)
+            .clip(shape)
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(
+                        Color(0xFF081226),
+                        Color(0xFF13254A),
+                        Color(0xFF091326)
+                    )
+                )
+            )
+            .border(
+                width = 1.5.dp,
+                brush = Brush.sweepGradient(
+                    colors = listOf(FireGold, FireOrange, SkyBluePrimary, FireCrimson, FireGold)
+                ),
+                shape = shape
+            )
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val w = this.size.width
+            val h = this.size.height
+            val center = Offset(w / 2f, h / 2f)
+            val radius = (this.size.minDimension / 2f) * 0.82f
+
+            // 1. Animated Fire & Cyan Radial Aura
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        FireOrange.copy(alpha = 0.40f + 0.15f * sin(flamePulse)),
+                        SkyBluePrimary.copy(alpha = 0.25f),
+                        Color.Transparent
+                    ),
+                    center = center,
+                    radius = radius * 1.15f
+                ),
+                radius = radius * 1.15f,
+                center = center
+            )
+
+            // 2. Rotating Cyber-Fire & Plasma Arcs (GIF-style continuous motion)
+            val arcTopLeft = Offset(center.x - radius, center.y - radius)
+            val arcSize = Size(radius * 2f, radius * 2f)
+            drawArc(
+                brush = Brush.sweepGradient(
+                    colors = listOf(FireGold, FireOrange, FireCrimson, SkyBluePrimary, FireGold)
+                ),
+                startAngle = ringSpin,
+                sweepAngle = 115f,
+                useCenter = false,
+                topLeft = arcTopLeft,
+                size = arcSize,
+                style = Stroke(width = w * 0.065f, cap = StrokeCap.Round)
+            )
+            drawArc(
+                color = SkyBluePrimary,
+                startAngle = ringSpin + 180f,
+                sweepAngle = 105f,
+                useCenter = false,
+                topLeft = arcTopLeft,
+                size = arcSize,
+                style = Stroke(width = w * 0.055f, cap = StrokeCap.Round)
+            )
+
+            // 3. Rising Flame Embers inside Logo
+            for (i in 0 until 5) {
+                val cycle = ((flamePulse / (2f * PI.toFloat())) + i * 0.2f) % 1f
+                val ex = w * (0.24f + i * 0.13f) + sin(flamePulse + i) * (w * 0.04f)
+                val ey = h * (0.85f - cycle * 0.65f)
+                drawCircle(
+                    color = if (i % 2 == 0) FireGold.copy(alpha = 1f - cycle) else FireOrange.copy(alpha = 1f - cycle),
+                    radius = w * 0.038f,
+                    center = Offset(ex, ey)
+                )
+            }
+
+            // 4. Custom Vector-Drawn Glowing "A" Monogram
+            val aPath = Path().apply {
+                moveTo(w * 0.50f, h * 0.20f) // Apex of "A"
+                lineTo(w * 0.76f, h * 0.78f) // Bottom Right leg
+                lineTo(w * 0.63f, h * 0.78f)
+                lineTo(w * 0.57f, h * 0.63f)
+                lineTo(w * 0.43f, h * 0.63f)
+                lineTo(w * 0.37f, h * 0.78f)
+                lineTo(w * 0.24f, h * 0.78f) // Bottom Left leg
+                close()
+            }
+
+            // Inner triangle cutout of "A"
+            val innerTriangle = Path().apply {
+                moveTo(w * 0.50f, h * 0.36f)
+                lineTo(w * 0.55f, h * 0.52f)
+                lineTo(w * 0.45f, h * 0.52f)
+                close()
+            }
+
+            // Outer Fire Glow behind "A"
+            drawPath(
+                path = aPath,
+                color = FireOrange.copy(alpha = 0.55f),
+                style = Stroke(width = w * 0.07f, join = StrokeJoin.Round)
+            )
+
+            // Main Gradient Fill for "A"
+            drawPath(
+                path = aPath,
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        Color.White,
+                        FireGold,
+                        FireOrange
+                    )
+                )
+            )
+
+            // Cutout center of "A"
+            drawPath(
+                path = innerTriangle,
+                color = Color(0xFF0E1D3A)
+            )
+
+            // Animated Holographic Laser Shine sweeping across the logo
+            val sweepX = w * shineSweep
+            drawLine(
+                brush = Brush.linearGradient(
+                    colors = listOf(
+                        Color.Transparent,
+                        Color.White.copy(alpha = 0.65f),
+                        Color.Transparent
+                    )
+                ),
+                start = Offset(sweepX - w * 0.2f, 0f),
+                end = Offset(sweepX + w * 0.2f, h),
+                strokeWidth = w * 0.12f
+            )
+        }
+    }
+}
 
 /**
  * Reusable Ultra-Lightweight iPhone Glassmorphic Card ("iPhone Glass Hi Effect")
@@ -158,8 +350,8 @@ fun IosGlassCard(
 /**
  * Lightweight iPhone Glassmorphic Connect Screen for **A VPN** with:
  * - Animated Blazing Fire Orb (`FireConnectOrb`) when connecting / connected
+ * - Direct "⚡ Fetch Latest & Connect Fastest Tunnel" button
  * - Real-Time Live Telemetry & Speed Indicator (`RealtimeLiveIndicatorPill`)
- * - Strict respect for Manual Country Selection vs Auto Fastest Mode
  * - Prominent Developer Credits Card ("Made with love by Ashir ♥️")
  */
 @Composable
@@ -176,7 +368,6 @@ fun ConnectScreen(
     val isConnecting = status == TunnelConnectionStatus.CONNECTING
     val isDark = uiState.preferences.isDarkTheme
 
-    // Show the user's selected country or the active tunnel country matching that country code
     val displayNode = if (!uiState.isAutoFastestMode) {
         uiState.telemetry.activeNode?.takeIf {
             it.countryCode.equals(uiState.selectedNode.countryCode, ignoreCase = true)
@@ -298,7 +489,7 @@ fun ConnectScreen(
                                         }
                                         Spacer(modifier = Modifier.height(2.dp))
                                         Text(
-                                            text = "Exit IP: $liveExitIp • ${displayNode.cityName}",
+                                            text = "Tunnel IP: $liveExitIp • ⚡ ${displayNode.pingMs} ms • All Apps Active",
                                             style = MaterialTheme.typography.labelSmall.copy(
                                                 fontFamily = JetBrainsMonoFontFamily
                                             ),
@@ -308,7 +499,7 @@ fun ConnectScreen(
 
                                     TunnelConnectionStatus.CONNECTING -> {
                                         Text(
-                                            text = "Igniting Fire Tunnel…",
+                                            text = "Igniting Ultra-Fast Tunnel…",
                                             style = MaterialTheme.typography.titleLarge.copy(
                                                 fontWeight = FontWeight.Bold
                                             ),
@@ -316,7 +507,7 @@ fun ConnectScreen(
                                         )
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
-                                            text = "Switching to ${displayNode.flagEmoji} ${displayNode.countryName} (${displayNode.cityName})",
+                                            text = "Connecting to ${displayNode.flagEmoji} ${displayNode.countryName} (${displayNode.pingMs} ms)",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             textAlign = TextAlign.Center
@@ -339,9 +530,9 @@ fun ConnectScreen(
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
                                             text = if (uiState.isAutoFastestMode) {
-                                                "Smart Auto-Fastest • ${displayNode.flagEmoji} ${displayNode.countryName} (${displayNode.pingMs} ms)"
+                                                "Ultra-Fast Auto Tunnel • ${displayNode.flagEmoji} ${displayNode.countryName} (${displayNode.pingMs} ms)"
                                             } else {
-                                                "Manual Server Locked • ${displayNode.cityName} (${displayNode.pingMs} ms)"
+                                                "Manual Tunnel Locked • ${displayNode.cityName} (${displayNode.pingMs} ms)"
                                             },
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -354,18 +545,12 @@ fun ConnectScreen(
 
                         Spacer(modifier = Modifier.height(18.dp))
 
-                        // Quick Action Button: Connect Selected Country OR Switch to Auto-Fastest
+                        // Direct Live Fetch & Connect Fastest Tunnel Button
                         Button(
-                            onClick = {
-                                if (!uiState.isAutoFastestMode && !isConnected) {
-                                    onToggleConnection()
-                                } else {
-                                    onConnectSmartFastest()
-                                }
-                            },
+                            onClick = onConnectSmartFastest,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(48.dp)
+                                .height(50.dp)
                                 .testTag("smart_fastest_button"),
                             shape = RoundedCornerShape(16.dp),
                             colors = ButtonDefaults.buttonColors(
@@ -381,29 +566,39 @@ fun ConnectScreen(
                                 }
                             )
                         ) {
-                            Icon(
-                                imageVector = if (!uiState.isAutoFastestMode && !isConnected) {
-                                    Icons.Default.LocalFireDepartment
-                                } else {
-                                    Icons.Default.Bolt
-                                },
-                                contentDescription = null,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = when {
-                                    !uiState.isAutoFastestMode && !isConnected ->
-                                        "Connect ${displayNode.flagEmoji} ${displayNode.countryName} Now"
-                                    isConnected ->
-                                        "Boost to Fastest Server"
-                                    else ->
-                                        "Auto-Connect Best Server"
-                                },
-                                style = MaterialTheme.typography.titleMedium.copy(
-                                    fontWeight = FontWeight.Bold
+                            if (uiState.isSyncingApi) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                    color = if (isConnected) FireOrange else Color.White
                                 )
-                            )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Fetching Fastest Live Tunnel…",
+                                    style = MaterialTheme.typography.titleMedium.copy(
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Bolt,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = if (isConnected) {
+                                        "Fetch Latest & Switch to Fastest Tunnel"
+                                    } else {
+                                        "Auto-Fetch & Connect Fastest Tunnel"
+                                    },
+                                    style = MaterialTheme.typography.titleMedium.copy(
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     }
                 }
@@ -992,7 +1187,7 @@ private fun SelectedCountryGlassCard(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = if (isAutoMode) {
-                        "Auto Best • ${node.countryName}"
+                        "Auto Fastest • ${node.countryName}"
                     } else {
                         "Manual • ${node.countryName}"
                     },
@@ -1004,7 +1199,7 @@ private fun SelectedCountryGlassCard(
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "${node.cityName} • ${node.pingMs} ms (${node.latencyQualityLabel})",
+                    text = "${node.cityName} • ⚡ ${node.pingMs} ms (${node.latencyQualityLabel})",
                     style = MaterialTheme.typography.bodyMedium,
                     color = latencyColor(node.pingMs),
                     maxLines = 1,
@@ -1022,7 +1217,7 @@ private fun SelectedCountryGlassCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Servers",
+                        text = "Tunnels",
                         style = MaterialTheme.typography.labelLarge.copy(
                             fontWeight = FontWeight.Bold
                         ),
@@ -1103,8 +1298,8 @@ private fun TelemetryGlassCard(
 @Composable
 fun latencyColor(pingMs: Int): Color {
     return when {
-        pingMs < 95 -> EmeraldConnected
-        pingMs < 190 -> SkyBluePrimary
+        pingMs < 55 -> EmeraldConnected
+        pingMs < 110 -> SkyBluePrimary
         else -> AmberHandshaking
     }
 }

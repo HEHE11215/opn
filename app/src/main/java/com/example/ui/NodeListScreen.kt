@@ -24,6 +24,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
@@ -67,9 +69,10 @@ import java.util.Locale
 private val FireAccent = Color(0xFFFF5E1A)
 
 /**
- * Lightweight iPhone Glassmorphic Locations Screen:
- * - Strictly ONE card per country (fastest server automatically chosen for each country).
- * - Tapping any country locks onto that exact country and connects immediately!
+ * Lightweight iPhone Glassmorphic Tunnels Screen:
+ * - Includes 1-tap **Ping Asc ↑ / Desc ↓** sort buttons + full sort row (`Ping: Asc ↑`, `Ping: Desc ↓`, `Speed ⚡`, `Country A–Z`).
+ * - Featured **"⚡ Auto-Fetch Latest & Fastest Tunnel"** card at the top.
+ * - Strictly ONE card per country backed by the fastest live tunnel for that country.
  */
 @Composable
 fun NodeListScreen(
@@ -77,6 +80,7 @@ fun NodeListScreen(
     onSearchQueryChange: (String) -> Unit,
     onSelectRegion: (VpnRegion) -> Unit,
     onSelectSortOption: (NodeSortOption) -> Unit,
+    onTogglePingSort: () -> Unit,
     onSelectAutoFastest: () -> Unit,
     onSelectAndConnectNode: (VpnNode) -> Unit,
     onToggleFavorite: (String) -> Unit,
@@ -86,6 +90,7 @@ fun NodeListScreen(
     modifier: Modifier = Modifier
 ) {
     val isDark = uiState.preferences.isDarkTheme
+    val isPingAsc = uiState.sortOption == NodeSortOption.PING_ASC
 
     Column(
         modifier = modifier
@@ -100,7 +105,7 @@ fun NodeListScreen(
         ) {
             Spacer(modifier = Modifier.height(6.dp))
 
-            // 1. iPhone Glass Search Bar + Refresh & Add Server Buttons
+            // 1. iPhone Glass Search Bar + Quick Ping Asc/Desc Button + Refresh + Add Buttons
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -149,7 +154,42 @@ fun NodeListScreen(
                     )
                 )
 
-                // Auto-Refresh Live Servers Button
+                // Quick 1-Tap Ping Asc ↑ / Desc ↓ Toggle Button
+                IosGlassCard(
+                    isDark = isDark,
+                    cornerRadius = 16.dp,
+                    accentGlowColor = if (isPingAsc) EmeraldConnected else FireAccent,
+                    modifier = Modifier
+                        .height(52.dp)
+                        .clickable(onClick = onTogglePingSort)
+                        .testTag("ping_asc_desc_toggle_button")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .padding(horizontal = 11.dp)
+                            .height(52.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isPingAsc) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
+                            contentDescription = "Toggle Ping Sort Asc or Desc",
+                            tint = if (isPingAsc) EmeraldConnected else FireAccent,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(
+                            text = if (isPingAsc) "Ping ↑" else "Ping ↓",
+                            style = MaterialTheme.typography.labelLarge.copy(
+                                fontWeight = FontWeight.ExtraBold
+                            ),
+                            color = if (isPingAsc) EmeraldConnected else FireAccent,
+                            maxLines = 1
+                        )
+                    }
+                }
+
+                // Auto-Refresh Live Tunnels Button
                 IosGlassCard(
                     isDark = isDark,
                     cornerRadius = 16.dp,
@@ -170,7 +210,7 @@ fun NodeListScreen(
                         } else {
                             Icon(
                                 imageVector = Icons.Default.Refresh,
-                                contentDescription = "Refresh fastest servers",
+                                contentDescription = "Fetch latest fastest servers",
                                 tint = SkyBluePrimary
                             )
                         }
@@ -231,7 +271,7 @@ fun NodeListScreen(
 
             Spacer(modifier = Modifier.height(6.dp))
 
-            // 3. Clean Single-Line Sort Order Bar
+            // 3. Explicit Sort Bar: Ping: Asc ↑ | Ping: Desc ↓ | Speed ⚡ | Country A–Z
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -241,7 +281,7 @@ fun NodeListScreen(
             ) {
                 Text(
                     text = "Sort:",
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
@@ -250,12 +290,12 @@ fun NodeListScreen(
                     Surface(
                         shape = RoundedCornerShape(10.dp),
                         color = if (active) {
-                            SkyBluePrimary.copy(alpha = 0.18f)
+                            SkyBluePrimary.copy(alpha = 0.20f)
                         } else {
                             MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
                         },
                         border = if (active) {
-                            BorderStroke(1.dp, SkyBluePrimary.copy(alpha = 0.5f))
+                            BorderStroke(1.2.dp, SkyBluePrimary.copy(alpha = 0.65f))
                         } else null,
                         modifier = Modifier
                             .clip(RoundedCornerShape(10.dp))
@@ -265,7 +305,7 @@ fun NodeListScreen(
                         Text(
                             text = sortOpt.label,
                             style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = if (active) FontWeight.Bold else FontWeight.Medium
+                                fontWeight = if (active) FontWeight.ExtraBold else FontWeight.Medium
                             ),
                             color = if (active) {
                                 SkyBluePrimary
@@ -282,7 +322,7 @@ fun NodeListScreen(
             Spacer(modifier = Modifier.height(8.dp))
         }
 
-        // 4. Country List (Featured Auto-Fastest Card + 1 Card Per Country)
+        // 4. Country List (Featured Live Auto-Fetch Fastest Tunnel Card + 1 Card Per Country)
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -292,9 +332,11 @@ fun NodeListScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             item(key = "auto_fastest_header_card") {
+                val fastestOverall = uiState.allNodes.minByOrNull { it.pingMs } ?: uiState.selectedNode
                 AutoFastestLocationCard(
                     isSelected = uiState.isAutoFastestMode,
-                    fastestNode = uiState.filteredNodes.firstOrNull() ?: uiState.selectedNode,
+                    isSyncing = uiState.isSyncingApi,
+                    fastestNode = fastestOverall,
                     isDark = isDark,
                     onClick = onSelectAutoFastest
                 )
@@ -359,6 +401,7 @@ fun NodeListScreen(
 @Composable
 private fun AutoFastestLocationCard(
     isSelected: Boolean,
+    isSyncing: Boolean,
     fastestNode: VpnNode,
     isDark: Boolean,
     onClick: () -> Unit
@@ -366,7 +409,7 @@ private fun AutoFastestLocationCard(
     IosGlassCard(
         isDark = isDark,
         cornerRadius = 20.dp,
-        accentGlowColor = if (isSelected) SkyBluePrimary else null,
+        accentGlowColor = if (isSelected) EmeraldConnected else SkyBluePrimary,
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
@@ -384,12 +427,20 @@ private fun AutoFastestLocationCard(
                 modifier = Modifier.size(46.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Default.Bolt,
-                        contentDescription = null,
-                        tint = SkyBluePrimary,
-                        modifier = Modifier.size(26.dp)
-                    )
+                    if (isSyncing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(22.dp),
+                            strokeWidth = 2.dp,
+                            color = SkyBluePrimary
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Bolt,
+                            contentDescription = null,
+                            tint = SkyBluePrimary,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
                 }
             }
 
@@ -397,16 +448,16 @@ private fun AutoFastestLocationCard(
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Auto Fastest Server",
+                    text = "Live Fetch & Connect Fastest Tunnel",
                     style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.ExtraBold
                     ),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "Best speed (${fastestNode.flagEmoji} ${fastestNode.countryName} • ${fastestNode.pingMs} ms)",
+                    text = "Best right now: ${fastestNode.flagEmoji} ${fastestNode.countryName} • ⚡ ${fastestNode.pingMs} ms",
                     style = MaterialTheme.typography.bodyMedium,
                     color = EmeraldConnected,
                     maxLines = 1,
@@ -426,7 +477,7 @@ private fun AutoFastestLocationCard(
                 modifier = Modifier.height(38.dp)
             ) {
                 Text(
-                    text = if (isSelected) "Active" else "Auto",
+                    text = if (isSelected) "Active" else "Fastest",
                     style = MaterialTheme.typography.labelLarge.copy(color = Color.White),
                     maxLines = 1
                 )
@@ -475,7 +526,7 @@ private fun CountryServerRowCard(
 
             Spacer(modifier = Modifier.width(12.dp))
 
-            // 2. Country Name + Speed & Ping Subtitle
+            // 2. Country Name + Ultra-Fast Ping Subtitle
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = node.countryName,
