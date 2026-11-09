@@ -69,10 +69,10 @@ import java.util.Locale
 private val FireAccent = Color(0xFFFF5E1A)
 
 /**
- * Lightweight iPhone Glassmorphic Tunnels Screen:
- * - Includes 1-tap **Ping Asc ↑ / Desc ↓** sort buttons + full sort row (`Ping: Asc ↑`, `Ping: Desc ↓`, `Speed ⚡`, `Country A–Z`).
- * - Featured **"⚡ Auto-Fetch Latest & Fastest Tunnel"** card at the top.
- * - Strictly ONE card per country backed by the fastest live tunnel for that country.
+ * Lightweight iPhone Glassmorphic Servers Screen:
+ * - Compact 1-tap **Ping ↑ / Ping ↓** sort button + sort bar (`Ping: Asc ↑`, `Ping: Desc ↓`, `Speed ⚡`, `Country A–Z`).
+ * - Short, crisp button labels with clean margins & internal padding.
+ * - Strictly ONE card per country backed by Ultra-Light Wi-Fi Warp speed.
  */
 @Composable
 fun NodeListScreen(
@@ -105,7 +105,7 @@ fun NodeListScreen(
         ) {
             Spacer(modifier = Modifier.height(6.dp))
 
-            // 1. iPhone Glass Search Bar + Quick Ping Asc/Desc Button + Refresh + Add Buttons
+            // 1. iPhone Glass Search Bar + Compact Ping ↑/↓ + Sync + Add Buttons
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -119,7 +119,7 @@ fun NodeListScreen(
                         .testTag("node_search_input"),
                     placeholder = {
                         Text(
-                            text = "Search country…",
+                            text = "Search…",
                             style = MaterialTheme.typography.bodyMedium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -128,7 +128,8 @@ fun NodeListScreen(
                     leadingIcon = {
                         Icon(
                             imageVector = Icons.Default.Search,
-                            contentDescription = "Search country"
+                            contentDescription = "Search country",
+                            modifier = Modifier.size(18.dp)
                         )
                     },
                     trailingIcon = if (uiState.searchQuery.isNotEmpty()) {
@@ -139,7 +140,8 @@ fun NodeListScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Clear,
-                                    contentDescription = "Clear search"
+                                    contentDescription = "Clear search",
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                         }
@@ -147,27 +149,27 @@ fun NodeListScreen(
                     singleLine = true,
                     shape = RoundedCornerShape(16.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.75f),
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f),
+                        focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.60f),
                         focusedBorderColor = SkyBluePrimary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
                     )
                 )
 
-                // Quick 1-Tap Ping Asc ↑ / Desc ↓ Toggle Button
+                // Compact 1-Tap Ping Asc ↑ / Desc ↓ Toggle Button
                 IosGlassCard(
                     isDark = isDark,
-                    cornerRadius = 16.dp,
+                    cornerRadius = 15.dp,
                     accentGlowColor = if (isPingAsc) EmeraldConnected else FireAccent,
                     modifier = Modifier
-                        .height(52.dp)
+                        .height(48.dp)
                         .clickable(onClick = onTogglePingSort)
                         .testTag("ping_asc_desc_toggle_button")
                 ) {
                     Row(
                         modifier = Modifier
-                            .padding(horizontal = 11.dp)
-                            .height(52.dp),
+                            .padding(horizontal = 12.dp)
+                            .height(48.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
@@ -175,13 +177,14 @@ fun NodeListScreen(
                             imageVector = if (isPingAsc) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
                             contentDescription = "Toggle Ping Sort Asc or Desc",
                             tint = if (isPingAsc) EmeraldConnected else FireAccent,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(15.dp)
                         )
-                        Spacer(modifier = Modifier.width(3.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
                         Text(
                             text = if (isPingAsc) "Ping ↑" else "Ping ↓",
                             style = MaterialTheme.typography.labelLarge.copy(
-                                fontWeight = FontWeight.ExtraBold
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp
                             ),
                             color = if (isPingAsc) EmeraldConnected else FireAccent,
                             maxLines = 1
@@ -192,8 +195,8 @@ fun NodeListScreen(
                 // Auto-Refresh Live Tunnels Button
                 IosGlassCard(
                     isDark = isDark,
-                    cornerRadius = 16.dp,
-                    modifier = Modifier.size(52.dp)
+                    cornerRadius = 15.dp,
+                    modifier = Modifier.size(48.dp)
                 ) {
                     IconButton(
                         onClick = onSyncPublicApi,
@@ -204,14 +207,15 @@ fun NodeListScreen(
                     ) {
                         if (uiState.isSyncingApi) {
                             CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
+                                modifier = Modifier.size(18.dp),
                                 strokeWidth = 2.dp
                             )
                         } else {
                             Icon(
                                 imageVector = Icons.Default.Refresh,
-                                contentDescription = "Fetch latest fastest servers",
-                                tint = SkyBluePrimary
+                                contentDescription = "Fetch latest servers",
+                                tint = SkyBluePrimary,
+                                modifier = Modifier.size(19.dp)
                             )
                         }
                     }
@@ -220,9 +224,9 @@ fun NodeListScreen(
                 // Add Custom Server Button
                 IosGlassCard(
                     isDark = isDark,
-                    cornerRadius = 16.dp,
+                    cornerRadius = 15.dp,
                     accentGlowColor = SkyBluePrimary,
-                    modifier = Modifier.size(52.dp)
+                    modifier = Modifier.size(48.dp)
                 ) {
                     IconButton(
                         onClick = onOpenAddCustomModal,
@@ -233,13 +237,14 @@ fun NodeListScreen(
                         Icon(
                             imageVector = Icons.Default.Add,
                             contentDescription = "Add custom server",
-                            tint = SkyBluePrimary
+                            tint = SkyBluePrimary,
+                            modifier = Modifier.size(19.dp)
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             // 2. Single-Line Region Filter Chips
             Row(
@@ -256,7 +261,7 @@ fun NodeListScreen(
                         label = {
                             Text(
                                 text = region.displayName,
-                                style = MaterialTheme.typography.labelLarge,
+                                style = MaterialTheme.typography.labelLarge.copy(fontSize = 11.sp),
                                 maxLines = 1
                             )
                         },
@@ -290,12 +295,12 @@ fun NodeListScreen(
                     Surface(
                         shape = RoundedCornerShape(10.dp),
                         color = if (active) {
-                            SkyBluePrimary.copy(alpha = 0.20f)
+                            SkyBluePrimary.copy(alpha = 0.18f)
                         } else {
                             MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
                         },
                         border = if (active) {
-                            BorderStroke(1.2.dp, SkyBluePrimary.copy(alpha = 0.65f))
+                            BorderStroke(1.1.dp, SkyBluePrimary.copy(alpha = 0.65f))
                         } else null,
                         modifier = Modifier
                             .clip(RoundedCornerShape(10.dp))
@@ -305,7 +310,8 @@ fun NodeListScreen(
                         Text(
                             text = sortOpt.label,
                             style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = if (active) FontWeight.ExtraBold else FontWeight.Medium
+                                fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                                fontSize = 11.sp
                             ),
                             color = if (active) {
                                 SkyBluePrimary
@@ -313,7 +319,7 @@ fun NodeListScreen(
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             },
                             maxLines = 1,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp)
                         )
                     }
                 }
@@ -322,7 +328,7 @@ fun NodeListScreen(
             Spacer(modifier = Modifier.height(8.dp))
         }
 
-        // 4. Country List (Featured Live Auto-Fetch Fastest Tunnel Card + 1 Card Per Country)
+        // 4. Country List
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -355,11 +361,11 @@ fun NodeListScreen(
                                 imageVector = Icons.Default.Public,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(42.dp)
+                                modifier = Modifier.size(40.dp)
                             )
-                            Spacer(modifier = Modifier.height(10.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "No matching countries found",
+                                text = "No matching countries",
                                 style = MaterialTheme.typography.titleMedium
                             )
                         }
@@ -418,18 +424,18 @@ private fun AutoFastestLocationCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
+                .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = SkyBluePrimary.copy(alpha = 0.16f),
-                modifier = Modifier.size(46.dp)
+                modifier = Modifier.size(42.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     if (isSyncing) {
                         CircularProgressIndicator(
-                            modifier = Modifier.size(22.dp),
+                            modifier = Modifier.size(20.dp),
                             strokeWidth = 2.dp,
                             color = SkyBluePrimary
                         )
@@ -438,26 +444,26 @@ private fun AutoFastestLocationCard(
                             imageVector = Icons.Default.Bolt,
                             contentDescription = null,
                             tint = SkyBluePrimary,
-                            modifier = Modifier.size(26.dp)
+                            modifier = Modifier.size(22.dp)
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.width(14.dp))
+            Spacer(modifier = Modifier.width(12.dp))
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Live Fetch & Connect Fastest Tunnel",
+                    text = "Fastest Wi-Fi Tunnel",
                     style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.ExtraBold
+                        fontWeight = FontWeight.Bold
                     ),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "Best right now: ${fastestNode.flagEmoji} ${fastestNode.countryName} • ⚡ ${fastestNode.pingMs} ms",
+                    text = "${fastestNode.flagEmoji} ${fastestNode.countryName} • ⚡ ${fastestNode.pingMs} ms",
                     style = MaterialTheme.typography.bodyMedium,
                     color = EmeraldConnected,
                     maxLines = 1,
@@ -465,20 +471,25 @@ private fun AutoFastestLocationCard(
                 )
             }
 
-            Spacer(modifier = Modifier.width(10.dp))
+            Spacer(modifier = Modifier.width(8.dp))
 
             Button(
                 onClick = onClick,
                 shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (isSelected) EmeraldConnected else SkyBluePrimary
                 ),
-                modifier = Modifier.height(38.dp)
+                modifier = Modifier
+                    .padding(start = 4.dp)
+                    .height(34.dp)
             ) {
                 Text(
-                    text = if (isSelected) "Active" else "Fastest",
-                    style = MaterialTheme.typography.labelLarge.copy(color = Color.White),
+                    text = if (isSelected) "Active" else "Auto ⚡",
+                    style = MaterialTheme.typography.labelLarge.copy(
+                        color = Color.White,
+                        fontSize = 11.sp
+                    ),
                     maxLines = 1
                 )
             }
@@ -507,19 +518,19 @@ private fun CountryServerRowCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
+                .padding(horizontal = 14.dp, vertical = 11.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // 1. Country Flag Box
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
-                modifier = Modifier.size(46.dp)
+                modifier = Modifier.size(42.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Text(
                         text = node.flagEmoji,
-                        fontSize = 24.sp
+                        fontSize = 22.sp
                     )
                 }
             }
@@ -537,7 +548,7 @@ private fun CountryServerRowCard(
                     overflow = TextOverflow.Ellipsis
                 )
 
-                Spacer(modifier = Modifier.height(3.dp))
+                Spacer(modifier = Modifier.height(2.dp))
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -570,28 +581,29 @@ private fun CountryServerRowCard(
             IconButton(
                 onClick = onToggleFavorite,
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(36.dp)
                     .testTag("fav_button_${node.id}")
             ) {
                 Icon(
                     imageVector = if (isFavorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
                     contentDescription = if (isFavorite) "Unstar country" else "Star country",
-                    tint = if (isFavorite) AmberHandshaking else MaterialTheme.colorScheme.onSurfaceVariant
+                    tint = if (isFavorite) AmberHandshaking else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(19.dp)
                 )
             }
 
-            Spacer(modifier = Modifier.width(4.dp))
+            Spacer(modifier = Modifier.width(6.dp))
 
-            // 4. Clean Connect Button that locks onto this exact country
+            // 4. Compact Glass Pill Button with short label ("Use" / "Active") & clean padding
             Button(
                 onClick = onSelectNode,
-                shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                shape = RoundedCornerShape(11.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 5.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (isSelected) FireAccent else SkyBluePrimary
                 ),
                 modifier = Modifier
-                    .height(38.dp)
+                    .height(34.dp)
                     .testTag("select_node_${node.id}")
             ) {
                 if (isSelected) {
@@ -599,12 +611,15 @@ private fun CountryServerRowCard(
                         imageVector = Icons.Default.LocalFireDepartment,
                         contentDescription = null,
                         tint = Color.White,
-                        modifier = Modifier.size(15.dp)
+                        modifier = Modifier.size(13.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = "Locked",
-                        style = MaterialTheme.typography.labelLarge.copy(color = Color.White),
+                        text = "Active",
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            color = Color.White,
+                            fontSize = 11.sp
+                        ),
                         maxLines = 1
                     )
                 } else {
@@ -612,12 +627,15 @@ private fun CountryServerRowCard(
                         imageVector = Icons.Default.Check,
                         contentDescription = null,
                         tint = Color.White,
-                        modifier = Modifier.size(14.dp)
+                        modifier = Modifier.size(13.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = "Connect",
-                        style = MaterialTheme.typography.labelLarge.copy(color = Color.White),
+                        text = "Use",
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            color = Color.White,
+                            fontSize = 11.sp
+                        ),
                         maxLines = 1
                     )
                 }
@@ -634,14 +652,14 @@ private fun SignalStrengthIndicator(
     Row(
         verticalAlignment = Alignment.Bottom,
         horizontalArrangement = Arrangement.spacedBy(2.dp),
-        modifier = Modifier.height(13.dp)
+        modifier = Modifier.height(12.dp)
     ) {
         for (i in 1..4) {
             val active = i <= bars
-            val barHeight = (4 + (i * 2.2)).dp
+            val barHeight = (3.5 + (i * 2.0)).dp
             Box(
                 modifier = Modifier
-                    .width(3.dp)
+                    .width(2.8.dp)
                     .height(barHeight)
                     .clip(CircleShape)
                     .background(if (active) color else color.copy(alpha = 0.22f))

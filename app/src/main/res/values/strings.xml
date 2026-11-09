@@ -8,10 +8,13 @@
     <string name="status_disconnecting">Disconnecting…</string>
     <string name="btn_tap_to_connect">Tap to Connect</string>
     <string name="btn_tap_to_disconnect">Tap to Disconnect</string>
-    <string name="btn_smart_fastest">Auto-Connect Fastest</string>
+    <string name="btn_smart_fastest">Fast Connect</string>
     <string name="tab_connect">Connect</string>
     <string name="tab_nodes">Servers</string>
-    <string name="search_nodes_hint">Search country…</string>
-    <string name="notification_channel_name">A VPN Active Status</string>
-    <string name="notification_channel_desc">Shows real-time connection status and quick disconnect button</string>
+    <string name="search_nodes_hint">Search…</string>
+    <string name="notification_channel_name">A VPN Status Bar Control</string>
+    <string name="notification_channel_desc">Shows real-time connection status and 1-tap fast connect/disconnect in the top status bar</string>
+    <string name="shortcut_fast_connect_short">Fast Connect</string>
+    <string name="shortcut_fast_connect_long">1-Tap Fast Connect A VPN</string>
+    <string name="qs_tile_label">A VPN</string>
 </resources>

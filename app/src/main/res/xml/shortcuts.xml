@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="fast_connect_vpn"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher_round"
+        android:shortcutShortLabel="@string/shortcut_fast_connect_short"
+        android:shortcutLongLabel="@string/shortcut_fast_connect_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.aistudio.aethernode.vxkpmq"
+            android:targetClass="com.example.MainActivity">
+            <extra
+                android:name="extra_fast_start_connect"
+                android:value="true" />
+        </intent>
+    </shortcut>
+</shortcuts>

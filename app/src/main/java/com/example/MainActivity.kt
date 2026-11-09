@@ -1,6 +1,7 @@
 package com.example
 
 import android.Manifest
+import android.content.Intent
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
@@ -13,6 +14,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -37,6 +39,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -58,6 +61,7 @@ import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.LocalFireDepartment
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Security
@@ -123,6 +127,7 @@ import com.example.ui.theme.EmeraldConnected
 import com.example.ui.theme.SkyBluePrimary
 import com.example.vpn.AetherVpnStateBus
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -137,20 +142,43 @@ private val FireCrimson = Color(0xFFFF2A54)
 class MainActivity : ComponentActivity() {
 
     private val vpnViewModel: VpnViewModel by viewModels()
+    private val fastStartRequestFlow = MutableStateFlow(0L)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        checkFastStartIntent(intent)
         enableEdgeToEdge()
         setContent {
             val uiState by vpnViewModel.uiState.collectAsStateWithLifecycle()
+            val fastStartTrigger by fastStartRequestFlow.collectAsStateWithLifecycle()
 
             AetherNodeTheme(darkTheme = uiState.preferences.isDarkTheme) {
                 AVpnRootApp(
                     uiState = uiState,
-                    viewModel = vpnViewModel
+                    viewModel = vpnViewModel,
+                    fastStartTrigger = fastStartTrigger
                 )
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        checkFastStartIntent(intent)
+    }
+
+    private fun checkFastStartIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_FAST_START_CONNECT, false) == true ||
+            intent?.getStringExtra(EXTRA_FAST_START_CONNECT) == "true"
+        ) {
+            intent.removeExtra(EXTRA_FAST_START_CONNECT)
+            fastStartRequestFlow.value = System.currentTimeMillis()
+        }
+    }
+
+    companion object {
+        const val EXTRA_FAST_START_CONNECT = "extra_fast_start_connect"
     }
 }
 
@@ -158,23 +186,44 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun AVpnRootApp(
     uiState: VpnUiState,
-    viewModel: VpnViewModel
+    viewModel: VpnViewModel,
+    fastStartTrigger: Long = 0L
 ) {
     val context = LocalContext.current
-    var showStartupSplash by rememberSaveable { mutableStateOf(true) }
+    var showStartupSplash by rememberSaveable { mutableStateOf(fastStartTrigger == 0L) }
     var bootProgress by remember { mutableFloatStateOf(0.08f) }
     var pendingNodeToConnect by remember { mutableStateOf<VpnNode?>(null) }
     var pendingIsManualSelection by remember { mutableStateOf(false) }
 
+    // Minimalist Whole-App Theme Wave Transition State
+    val isDark = uiState.preferences.isDarkTheme
+    var previousDarkState by remember { mutableStateOf(isDark) }
+    val themeWaveProgress = remember { Animatable(1f) }
+    var showMinimalThemePill by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isDark) {
+        if (isDark != previousDarkState) {
+            previousDarkState = isDark
+            showMinimalThemePill = true
+            themeWaveProgress.snapTo(0f)
+            themeWaveProgress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 560, easing = FastOutSlowInEasing)
+            )
+            delay(950L)
+            showMinimalThemePill = false
+        }
+    }
+
     // Animated GIF-style boot sequence progression
     LaunchedEffect(showStartupSplash) {
         if (showStartupSplash) {
-            val steps = 20
+            val steps = 18
             for (i in 1..steps) {
                 bootProgress = i / steps.toFloat()
-                delay(85L)
+                delay(75L)
             }
-            delay(220L)
+            delay(180L)
             showStartupSplash = false
         }
     }
@@ -246,41 +295,59 @@ fun AVpnRootApp(
         }
     }
 
-    // Auto-dismiss full-screen glass event popup after 2.6 seconds (or tap anywhere)
+    // Handle 1-Tap Fast Connect launched from Top Status Bar Notification / Quick Settings Tile / Shortcut
+    LaunchedEffect(fastStartTrigger) {
+        if (fastStartTrigger > 0L) {
+            showStartupSplash = false
+            val fastestNode = viewModel.enableAutoFastestModeAndGetNode()
+            initiateVpnConnect(fastestNode, false)
+        }
+    }
+
+    // Auto-dismiss full-screen glass event popup after 2.5 seconds (or tap anywhere)
     LaunchedEffect(uiState.activePopup?.id) {
         if (uiState.activePopup != null) {
-            delay(2600L)
+            delay(2500L)
             viewModel.dismissPopup()
         }
     }
 
+    // Whole-App Minimalist Scale & Glass Transition on Dark/Light Switch
+    val wholeAppScale = if (themeWaveProgress.value < 1f) {
+        0.985f + 0.015f * sin(themeWaveProgress.value * PI.toFloat())
+    } else {
+        1f
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
-        // Animated Liquid iPhone Glass Mesh Backdrop (smooth Dark/Light transition)
-        IosMeshBackdrop(isDark = uiState.preferences.isDarkTheme)
+        // Enhanced Liquid iPhone Frosted Glass Mesh Backdrop
+        IosMeshBackdrop(isDark = isDark)
 
         Scaffold(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .scale(wholeAppScale),
             containerColor = Color.Transparent,
             contentWindowInsets = WindowInsets.safeDrawing,
             topBar = {
                 TopAppBar(
                     title = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            // Continuous 60 FPS GIF-Style Animated "A" Logo
+                            // Exact 3D "A" Shield App Logo with 60 FPS GIF-Style Animation
                             AnimatedGifStyleAVpnLogo(
-                                size = 40.dp,
-                                cornerRadius = 12.dp
+                                size = 38.dp,
+                                cornerRadius = 11.dp
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Column {
                                 Text(
                                     text = stringResource(R.string.app_name),
                                     style = MaterialTheme.typography.titleLarge.copy(
-                                        fontWeight = FontWeight.ExtraBold
+                                        fontWeight = FontWeight.Bold
                                     )
                                 )
                                 Text(
-                                    text = "Ultra-Fast Tunnels • By Ashir ♥️",
+                                    text = "Wi-Fi Warp • By Ashir ♥️",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
@@ -290,7 +357,40 @@ fun AVpnRootApp(
                         }
                     },
                     actions = {
-                        // Tappable "Ashir ♥️" Developer Badge
+                        // Top Status Bar Quick-Connect Pin Button
+                        Surface(
+                            onClick = { viewModel.pinTopStatusBarShortcut(context) },
+                            shape = RoundedCornerShape(50),
+                            color = EmeraldConnected.copy(alpha = 0.14f),
+                            border = BorderStroke(1.dp, EmeraldConnected.copy(alpha = 0.38f)),
+                            modifier = Modifier
+                                .padding(end = 6.dp)
+                                .height(32.dp)
+                                .testTag("topbar_status_bar_shortcut_button")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 9.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.NotificationsActive,
+                                    contentDescription = "Add Status Bar Button",
+                                    tint = EmeraldConnected,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    text = "Top Bar",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp
+                                    ),
+                                    color = EmeraldConnected
+                                )
+                            }
+                        }
+
+                        // Compact "Ashir ♥️" Developer Pill
                         Surface(
                             onClick = { viewModel.setShowDeveloperCreditsModal(true) },
                             shape = RoundedCornerShape(50),
@@ -298,34 +398,36 @@ fun AVpnRootApp(
                             border = BorderStroke(1.dp, FireCrimson.copy(alpha = 0.35f)),
                             modifier = Modifier
                                 .padding(end = 6.dp)
+                                .height(32.dp)
                                 .testTag("topbar_ashir_credits_button")
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                modifier = Modifier.padding(horizontal = 9.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Favorite,
                                     contentDescription = "Developer Credits",
                                     tint = FireCrimson,
-                                    modifier = Modifier.size(13.dp)
+                                    modifier = Modifier.size(12.dp)
                                 )
-                                Spacer(modifier = Modifier.width(4.dp))
+                                Spacer(modifier = Modifier.width(3.dp))
                                 Text(
                                     text = "Ashir",
                                     style = MaterialTheme.typography.labelSmall.copy(
-                                        fontWeight = FontWeight.ExtraBold
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp
                                     ),
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
                         }
 
-                        // Smooth Animated Sun / Moon Dark Mode Pill Toggle
-                        AnimatedGlassThemeToggle(
-                            isDark = uiState.preferences.isDarkTheme,
+                        // Minimalist Glass Dark / Light UI Switch
+                        MinimalistGlassThemeSwitch(
+                            isDark = isDark,
                             onToggle = {
-                                viewModel.toggleDarkTheme(!uiState.preferences.isDarkTheme)
+                                viewModel.toggleDarkTheme(!isDark)
                             }
                         )
                         Spacer(modifier = Modifier.width(8.dp))
@@ -338,9 +440,9 @@ fun AVpnRootApp(
             bottomBar = {
                 val navBarColor by animateColorAsState(
                     targetValue = MaterialTheme.colorScheme.surface.copy(
-                        alpha = if (uiState.preferences.isDarkTheme) 0.80f else 0.88f
+                        alpha = if (isDark) 0.78f else 0.86f
                     ),
-                    animationSpec = tween(500, easing = FastOutSlowInEasing),
+                    animationSpec = tween(480, easing = FastOutSlowInEasing),
                     label = "nav_bar_glass_color"
                 )
 
@@ -400,13 +502,15 @@ fun AVpnRootApp(
                                 }
                             },
                             onConnectSmartFastest = {
-                                // Directly fetch latest & fastest live server available right now and connect!
                                 viewModel.fetchLatestAndConnectFastestNow { fastestNow ->
                                     initiateVpnConnect(fastestNow, false)
                                 }
                             },
                             onOpenNodeSelector = {
                                 viewModel.selectTab(AetherTab.NODES)
+                            },
+                            onAddTopStatusBarShortcut = {
+                                viewModel.pinTopStatusBarShortcut(context)
                             },
                             onOpenDeveloperCredits = {
                                 viewModel.setShowDeveloperCreditsModal(true)
@@ -441,7 +545,67 @@ fun AVpnRootApp(
             }
         }
 
-        // Full-Screen Optimized iPhone Glass Event Popup Overlay (Centered on Whole Screen!)
+        // Minimalist Whole-App Theme Radial Wave & Floating Pill when switching Dark/Light
+        if (themeWaveProgress.value < 1f) {
+            val waveProgress = themeWaveProgress.value
+            val waveAlpha = (1f - waveProgress) * 0.35f
+            val waveColor = if (isDark) SkyBluePrimary else FireGold
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val origin = Offset(size.width * 0.90f, size.height * 0.07f)
+                val maxRadius = size.maxDimension * 1.25f
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            waveColor.copy(alpha = waveAlpha),
+                            waveColor.copy(alpha = waveAlpha * 0.4f),
+                            Color.Transparent
+                        ),
+                        center = origin,
+                        radius = maxRadius * waveProgress.coerceAtLeast(0.05f)
+                    ),
+                    radius = maxRadius * waveProgress,
+                    center = origin
+                )
+            }
+        }
+
+        AnimatedVisibility(
+            visible = showMinimalThemePill,
+            enter = fadeIn(tween(180)) + scaleIn(initialScale = 0.88f),
+            exit = fadeOut(tween(220)) + scaleOut(targetScale = 0.92f),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 92.dp)
+        ) {
+            IosGlassCard(
+                isDark = isDark,
+                cornerRadius = 50.dp,
+                accentGlowColor = if (isDark) SkyBluePrimary else FireGold
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = if (isDark) Icons.Default.DarkMode else Icons.Default.LightMode,
+                        contentDescription = null,
+                        tint = if (isDark) SkyBluePrimary else FireOrange,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (isDark) "Dark Glass UI" else "Light Glass UI",
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+        }
+
+        // Full-Screen Optimized iPhone Glass Event Popup Overlay
         AnimatedVisibility(
             visible = uiState.activePopup != null,
             enter = fadeIn(tween(200)) + scaleIn(
@@ -457,7 +621,7 @@ fun AVpnRootApp(
             uiState.activePopup?.let { popup ->
                 AVpnFullScreenGlassPopupOverlay(
                     popup = popup,
-                    isDark = uiState.preferences.isDarkTheme,
+                    isDark = isDark,
                     onDismiss = viewModel::dismissPopup
                 )
             }
@@ -471,7 +635,7 @@ fun AVpnRootApp(
             modifier = Modifier.fillMaxSize()
         ) {
             AshirDeveloperCreditsFullScreenOverlay(
-                isDark = uiState.preferences.isDarkTheme,
+                isDark = isDark,
                 onDismiss = { viewModel.setShowDeveloperCreditsModal(false) }
             )
         }
@@ -484,7 +648,7 @@ fun AVpnRootApp(
             modifier = Modifier.fillMaxSize()
         ) {
             AddCustomNodeFullScreenOverlay(
-                isDark = uiState.preferences.isDarkTheme,
+                isDark = isDark,
                 onDismiss = { viewModel.setShowAddCustomNodeModal(false) },
                 onConfirmAdd = { country, code, city, ip, port, operator ->
                     viewModel.addCustomCommunityNode(
@@ -504,7 +668,7 @@ fun AVpnRootApp(
         AnimatedVisibility(
             visible = showStartupSplash,
             enter = fadeIn(tween(200)),
-            exit = fadeOut(tween(480))
+            exit = fadeOut(tween(420))
         ) {
             AVpnAnimatedBootScreen(
                 progress = bootProgress,
@@ -515,9 +679,93 @@ fun AVpnRootApp(
 }
 
 /**
+ * Minimalist iOS Glass Dark/Light UI Switch with smooth sliding frosted thumb,
+ * rotating sun/moon icon, and compact UI label.
+ */
+@Composable
+private fun MinimalistGlassThemeSwitch(
+    isDark: Boolean,
+    onToggle: () -> Unit
+) {
+    val thumbOffset by animateDpAsState(
+        targetValue = if (isDark) 34.dp else 0.dp,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "theme_thumb_offset"
+    )
+    val iconRotation by animateFloatAsState(
+        targetValue = if (isDark) 180f else 0f,
+        animationSpec = tween(420, easing = FastOutSlowInEasing),
+        label = "theme_icon_rotation"
+    )
+    val trackColor by animateColorAsState(
+        targetValue = if (isDark) {
+            Color(0xFF13223A).copy(alpha = 0.88f)
+        } else {
+            Color.White.copy(alpha = 0.88f)
+        },
+        animationSpec = tween(420),
+        label = "theme_track_color"
+    )
+    val borderColor by animateColorAsState(
+        targetValue = if (isDark) {
+            SkyBluePrimary.copy(alpha = 0.55f)
+        } else {
+            FireGold.copy(alpha = 0.65f)
+        },
+        animationSpec = tween(420),
+        label = "theme_border_color"
+    )
+
+    Box(
+        modifier = Modifier
+            .width(68.dp)
+            .height(32.dp)
+            .clip(RoundedCornerShape(50))
+            .background(trackColor)
+            .border(1.1.dp, borderColor, RoundedCornerShape(50))
+            .clickable(onClick = onToggle)
+            .padding(horizontal = 4.dp, vertical = 3.dp)
+            .testTag("theme_toggle_button"),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Text(
+            text = if (isDark) "Dark" else "Light",
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontWeight = FontWeight.Bold,
+                fontSize = 9.sp
+            ),
+            color = if (isDark) SkyBluePrimary else FireOrange,
+            modifier = Modifier
+                .align(if (isDark) Alignment.CenterStart else Alignment.CenterEnd)
+                .padding(horizontal = 6.dp)
+        )
+
+        Surface(
+            shape = CircleShape,
+            color = if (isDark) SkyBluePrimary else FireOrange,
+            shadowElevation = 3.dp,
+            modifier = Modifier
+                .size(25.dp)
+                .offset(x = thumbOffset)
+                .rotate(iconRotation)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = if (isDark) Icons.Default.DarkMode else Icons.Default.LightMode,
+                    contentDescription = "Toggle light or dark theme",
+                    tint = Color.White,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+        }
+    }
+}
+
+/**
  * Full-Screen Optimized iPhone Glass Event Popup Overlay.
- * Covers the whole screen with a soft translucent scrim and centers a glowing glass card
- * with GIF-style logo, flag badge, tunnel status, and "Made with love by Ashir ♥️".
  */
 @Composable
 private fun AVpnFullScreenGlassPopupOverlay(
@@ -538,7 +786,7 @@ private fun AVpnFullScreenGlassPopupOverlay(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.52f))
+            .background(Color.Black.copy(alpha = 0.50f))
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
@@ -550,11 +798,11 @@ private fun AVpnFullScreenGlassPopupOverlay(
     ) {
         IosGlassCard(
             isDark = isDark,
-            cornerRadius = 30.dp,
+            cornerRadius = 28.dp,
             accentGlowColor = accentColor,
             modifier = Modifier
                 .fillMaxWidth()
-                .widthIn(max = 360.dp)
+                .widthIn(max = 350.dp)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -564,33 +812,31 @@ private fun AVpnFullScreenGlassPopupOverlay(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 24.dp),
+                    .padding(horizontal = 22.dp, vertical = 22.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Top Row: Animated GIF-Style Logo + Country/Event Emblem
                 Box(contentAlignment = Alignment.BottomEnd) {
                     AnimatedGifStyleAVpnLogo(
-                        size = 72.dp,
-                        cornerRadius = 20.dp
+                        size = 68.dp,
+                        cornerRadius = 19.dp
                     )
                     Surface(
                         shape = CircleShape,
                         color = MaterialTheme.colorScheme.surface,
                         border = BorderStroke(1.5.dp, accentColor),
-                        modifier = Modifier.size(30.dp)
+                        modifier = Modifier.size(28.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Text(
                                 text = popup.flagEmoji,
-                                fontSize = 15.sp
+                                fontSize = 14.sp
                             )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
-                // Status Pill
                 Surface(
                     shape = RoundedCornerShape(50),
                     color = accentColor.copy(alpha = 0.16f),
@@ -599,25 +845,26 @@ private fun AVpnFullScreenGlassPopupOverlay(
                     Text(
                         text = popup.detailBadge,
                         style = MaterialTheme.typography.labelLarge.copy(
-                            fontWeight = FontWeight.ExtraBold
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp
                         ),
                         color = accentColor,
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 5.dp)
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                     )
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 Text(
                     text = popup.title,
                     style = MaterialTheme.typography.headlineMedium.copy(
-                        fontWeight = FontWeight.ExtraBold
+                        fontWeight = FontWeight.Bold
                     ),
                     color = MaterialTheme.colorScheme.onSurface,
                     textAlign = TextAlign.Center
                 )
 
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(5.dp))
 
                 Text(
                     text = popup.subtitle,
@@ -626,23 +873,22 @@ private fun AVpnFullScreenGlassPopupOverlay(
                     textAlign = TextAlign.Center
                 )
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
-                // Developer Credit Badge inside Popup
                 Surface(
                     shape = RoundedCornerShape(50),
                     color = FireCrimson.copy(alpha = 0.12f),
                     border = BorderStroke(1.dp, FireCrimson.copy(alpha = 0.3f))
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
                             imageVector = Icons.Default.Favorite,
                             contentDescription = null,
                             tint = FireCrimson,
-                            modifier = Modifier.size(13.dp)
+                            modifier = Modifier.size(12.dp)
                         )
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
@@ -655,22 +901,24 @@ private fun AVpnFullScreenGlassPopupOverlay(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
                 Button(
                     onClick = onDismiss,
                     shape = RoundedCornerShape(14.dp),
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = accentColor),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(46.dp)
+                        .height(42.dp)
                         .testTag("dismiss_event_popup_button")
                 ) {
                     Text(
-                        text = "Awesome",
-                        style = MaterialTheme.typography.titleMedium.copy(
+                        text = "OK",
+                        style = MaterialTheme.typography.labelLarge.copy(
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = Color.White,
+                            fontSize = 13.sp
                         )
                     )
                 }
@@ -680,130 +928,42 @@ private fun AVpnFullScreenGlassPopupOverlay(
 }
 
 /**
- * Smooth Animated Sun/Moon iPhone Glass Pill Toggle for Dark/Light Mode.
- */
-@Composable
-private fun AnimatedGlassThemeToggle(
-    isDark: Boolean,
-    onToggle: () -> Unit
-) {
-    val thumbOffset by animateDpAsState(
-        targetValue = if (isDark) 26.dp else 0.dp,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMedium
-        ),
-        label = "theme_thumb_offset"
-    )
-    val iconRotation by animateFloatAsState(
-        targetValue = if (isDark) 360f else 0f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessLow
-        ),
-        label = "theme_icon_rotation"
-    )
-    val trackColor by animateColorAsState(
-        targetValue = if (isDark) {
-            Color(0xFF182844).copy(alpha = 0.90f)
-        } else {
-            Color.White.copy(alpha = 0.85f)
-        },
-        animationSpec = tween(450),
-        label = "theme_track_color"
-    )
-    val borderColor by animateColorAsState(
-        targetValue = if (isDark) {
-            SkyBluePrimary.copy(alpha = 0.55f)
-        } else {
-            FireGold.copy(alpha = 0.65f)
-        },
-        animationSpec = tween(450),
-        label = "theme_border_color"
-    )
-
-    Box(
-        modifier = Modifier
-            .width(62.dp)
-            .height(34.dp)
-            .clip(RoundedCornerShape(50))
-            .background(trackColor)
-            .border(1.2.dp, borderColor, RoundedCornerShape(50))
-            .clickable(onClick = onToggle)
-            .padding(horizontal = 4.dp, vertical = 3.dp)
-            .testTag("theme_toggle_button"),
-        contentAlignment = Alignment.CenterStart
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 5.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = Icons.Default.LightMode,
-                contentDescription = null,
-                tint = FireGold.copy(alpha = if (isDark) 0.35f else 0f),
-                modifier = Modifier.size(14.dp)
-            )
-            Icon(
-                imageVector = Icons.Default.DarkMode,
-                contentDescription = null,
-                tint = SkyBluePrimary.copy(alpha = if (isDark) 0f else 0.45f),
-                modifier = Modifier.size(14.dp)
-            )
-        }
-
-        Surface(
-            shape = CircleShape,
-            color = if (isDark) SkyBluePrimary else FireOrange,
-            shadowElevation = 4.dp,
-            modifier = Modifier
-                .size(26.dp)
-                .offset(x = thumbOffset)
-                .rotate(iconRotation)
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    imageVector = if (isDark) Icons.Default.DarkMode else Icons.Default.LightMode,
-                    contentDescription = "Toggle light or dark theme",
-                    tint = Color.White,
-                    modifier = Modifier.size(15.dp)
-                )
-            }
-        }
-    }
-}
-
-/**
- * Liquid iPhone Glass Mesh Gradient Backdrop with animated drifting ambient orbs
- * and smooth 520ms Dark/Light mode color transitions.
+ * Enhanced Liquid iPhone Frosted Glass Mesh Backdrop with 3 animated aurora orbs
+ * and smooth Dark/Light mode transitions.
  */
 @Composable
 private fun IosMeshBackdrop(isDark: Boolean) {
     val bgColor by animateColorAsState(
-        targetValue = if (isDark) Color(0xFF070D19) else Color(0xFFEAF2FF),
-        animationSpec = tween(520, easing = FastOutSlowInEasing),
+        targetValue = if (isDark) Color(0xFF050A14) else Color(0xFFEAF3FF),
+        animationSpec = tween(480, easing = FastOutSlowInEasing),
         label = "backdrop_base_color"
     )
     val orb1Color by animateColorAsState(
         targetValue = if (isDark) {
-            SkyBluePrimary.copy(alpha = 0.24f)
+            SkyBluePrimary.copy(alpha = 0.28f)
         } else {
-            SkyBluePrimary.copy(alpha = 0.26f)
+            SkyBluePrimary.copy(alpha = 0.30f)
         },
-        animationSpec = tween(520),
+        animationSpec = tween(480),
         label = "orb1_color"
     )
     val orb2Color by animateColorAsState(
         targetValue = if (isDark) {
-            FireOrange.copy(alpha = 0.18f)
+            FireOrange.copy(alpha = 0.20f)
         } else {
-            FireOrange.copy(alpha = 0.16f)
+            FireOrange.copy(alpha = 0.18f)
         },
-        animationSpec = tween(520),
+        animationSpec = tween(480),
         label = "orb2_color"
+    )
+    val orb3Color by animateColorAsState(
+        targetValue = if (isDark) {
+            EmeraldConnected.copy(alpha = 0.16f)
+        } else {
+            EmeraldConnected.copy(alpha = 0.18f)
+        },
+        animationSpec = tween(480),
+        label = "orb3_color"
     )
 
     val infiniteTransition = rememberInfiniteTransition(label = "mesh_drift")
@@ -811,7 +971,7 @@ private fun IosMeshBackdrop(isDark: Boolean) {
         initialValue = 0f,
         targetValue = (2f * PI).toFloat(),
         animationSpec = infiniteRepeatable(
-            animation = tween(9000, easing = LinearEasing),
+            animation = tween(8500, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "mesh_drift_phase"
@@ -822,37 +982,43 @@ private fun IosMeshBackdrop(isDark: Boolean) {
             .fillMaxSize()
             .background(bgColor)
     ) {
-        val driftX = cos(driftPhase) * (size.width * 0.06f)
-        val driftY = sin(driftPhase) * (size.height * 0.04f)
+        val driftX = cos(driftPhase) * (size.width * 0.07f)
+        val driftY = sin(driftPhase) * (size.height * 0.05f)
 
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(orb1Color, Color.Transparent),
-                center = Offset(size.width * 0.20f + driftX, size.height * 0.15f + driftY),
-                radius = size.minDimension * 0.75f
+                center = Offset(size.width * 0.18f + driftX, size.height * 0.14f + driftY),
+                radius = size.minDimension * 0.78f
             ),
-            radius = size.minDimension * 0.75f,
-            center = Offset(size.width * 0.20f + driftX, size.height * 0.15f + driftY)
+            radius = size.minDimension * 0.78f,
+            center = Offset(size.width * 0.18f + driftX, size.height * 0.14f + driftY)
         )
 
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(orb2Color, Color.Transparent),
-                center = Offset(size.width * 0.82f - driftX, size.height * 0.45f - driftY),
-                radius = size.minDimension * 0.70f
+                center = Offset(size.width * 0.84f - driftX, size.height * 0.42f - driftY),
+                radius = size.minDimension * 0.72f
             ),
-            radius = size.minDimension * 0.70f,
-            center = Offset(size.width * 0.82f - driftX, size.height * 0.45f - driftY)
+            radius = size.minDimension * 0.72f,
+            center = Offset(size.width * 0.84f - driftX, size.height * 0.42f - driftY)
+        )
+
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(orb3Color, Color.Transparent),
+                center = Offset(size.width * 0.35f - driftX, size.height * 0.82f + driftY),
+                radius = size.minDimension * 0.68f
+            ),
+            radius = size.minDimension * 0.68f,
+            center = Offset(size.width * 0.35f - driftX, size.height * 0.82f + driftY)
         )
     }
 }
 
 /**
- * Animated GIF-Style Boot Splash Screen featuring:
- * - Multi-ring counter-rotating neon cyber-fire vortex & orbital arcs
- * - 18 rising glowing plasma/fire embers
- * - 60 FPS `AnimatedGifStyleAVpnLogo` in the center
- * - Live animated progress bar & prominent "Made with love by Ashir ♥️" Developer Card
+ * Animated GIF-Style Boot Splash Screen featuring the 3D "A" Shield Logo & "Made with love by Ashir ♥️".
  */
 @Composable
 private fun AVpnAnimatedBootScreen(
@@ -893,7 +1059,7 @@ private fun AVpnAnimatedBootScreen(
 
     val logoPulse by infiniteTransition.animateFloat(
         initialValue = 0.95f,
-        targetValue = 1.06f,
+        targetValue = 1.05f,
         animationSpec = infiniteRepeatable(
             animation = tween(750, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
@@ -941,7 +1107,7 @@ private fun AVpnAnimatedBootScreen(
         ) {
             Box(
                 contentAlignment = Alignment.Center,
-                modifier = Modifier.size(210.dp)
+                modifier = Modifier.size(204.dp)
             ) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     val center = Offset(size.width / 2f, size.height / 2f)
@@ -992,41 +1158,30 @@ private fun AVpnAnimatedBootScreen(
                             style = Stroke(width = 2.8.dp.toPx(), cap = StrokeCap.Round)
                         )
                     }
-
-                    for (orbIdx in 0 until 6) {
-                        val angleRad = ((outerRotation + orbIdx * 60f) * PI / 180.0).toFloat()
-                        val ox = center.x + cos(angleRad) * outerArcRadius
-                        val oy = center.y + sin(angleRad) * outerArcRadius
-                        drawCircle(
-                            color = if (orbIdx % 2 == 0) FireGold else SkyBluePrimary,
-                            radius = 5.dp.toPx(),
-                            center = Offset(ox, oy)
-                        )
-                    }
                 }
 
-                // 60 FPS Animated GIF-Style "A VPN" Logo
+                // Exact 3D "A" Shield Logo with 60 FPS GIF-style animation
                 AnimatedGifStyleAVpnLogo(
-                    size = 114.dp,
+                    size = 112.dp,
                     cornerRadius = 28.dp,
                     modifier = Modifier.scale(logoPulse)
                 )
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     imageVector = Icons.Default.LocalFireDepartment,
                     contentDescription = null,
                     tint = FireOrange,
-                    modifier = Modifier.size(30.dp)
+                    modifier = Modifier.size(28.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     text = stringResource(R.string.app_name),
                     style = MaterialTheme.typography.displayMedium.copy(
-                        fontWeight = FontWeight.ExtraBold,
+                        fontWeight = FontWeight.Bold,
                         color = Color.White
                     )
                 )
@@ -1036,8 +1191,8 @@ private fun AVpnAnimatedBootScreen(
 
             Text(
                 text = when {
-                    progress < 0.45f -> "Igniting Ultra-Fast Tunnel Engine…"
-                    progress < 0.80f -> "Fetching Fastest Worldwide Servers…"
+                    progress < 0.45f -> "Starting Wi-Fi Warp Engine…"
+                    progress < 0.80f -> "Syncing Ultra-Light Tunnels…"
                     else -> "Ready • Engineered by Ashir ♥️"
                 },
                 style = MaterialTheme.typography.bodyLarge.copy(
@@ -1046,7 +1201,7 @@ private fun AVpnAnimatedBootScreen(
                 color = Color.White.copy(alpha = 0.82f)
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             LinearProgressIndicator(
                 progress = { progress },
@@ -1054,7 +1209,7 @@ private fun AVpnAnimatedBootScreen(
                 trackColor = Color.White.copy(alpha = 0.16f),
                 strokeCap = StrokeCap.Round,
                 modifier = Modifier
-                    .width(200.dp)
+                    .width(190.dp)
                     .height(6.dp)
                     .clip(RoundedCornerShape(50))
             )
@@ -1063,7 +1218,7 @@ private fun AVpnAnimatedBootScreen(
         // Bottom Glass Developer Credit Card: "Made with love by Ashir ♥️"
         Surface(
             onClick = onDismiss,
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(22.dp),
             color = Color.White.copy(alpha = 0.10f),
             border = BorderStroke(
                 width = 1.2.dp,
@@ -1078,13 +1233,13 @@ private fun AVpnAnimatedBootScreen(
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(horizontal = 26.dp, vertical = 12.dp)
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp)
             ) {
                 Text(
                     text = stringResource(R.string.made_by_ashir),
                     style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 0.4.sp
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.3.sp
                     ),
                     color = Color.White
                 )
@@ -1110,7 +1265,7 @@ private fun AshirDeveloperCreditsFullScreenOverlay(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.56f))
+            .background(Color.Black.copy(alpha = 0.54f))
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -1121,11 +1276,11 @@ private fun AshirDeveloperCreditsFullScreenOverlay(
     ) {
         IosGlassCard(
             isDark = isDark,
-            cornerRadius = 30.dp,
+            cornerRadius = 28.dp,
             accentGlowColor = FireOrange,
             modifier = Modifier
                 .fillMaxWidth()
-                .widthIn(max = 380.dp)
+                .widthIn(max = 370.dp)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -1135,12 +1290,12 @@ private fun AshirDeveloperCreditsFullScreenOverlay(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 24.dp),
+                    .padding(horizontal = 22.dp, vertical = 22.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 AnimatedGifStyleAVpnLogo(
-                    size = 76.dp,
-                    cornerRadius = 22.dp
+                    size = 72.dp,
+                    cornerRadius = 20.dp
                 )
 
                 Spacer(modifier = Modifier.height(14.dp))
@@ -1149,7 +1304,7 @@ private fun AshirDeveloperCreditsFullScreenOverlay(
                     Text(
                         text = "Created by Ashir ♥️",
                         style = MaterialTheme.typography.headlineMedium.copy(
-                            fontWeight = FontWeight.ExtraBold
+                            fontWeight = FontWeight.Bold
                         ),
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -1158,7 +1313,7 @@ private fun AshirDeveloperCreditsFullScreenOverlay(
                         imageVector = Icons.Default.Verified,
                         contentDescription = "Verified",
                         tint = SkyBluePrimary,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                 }
 
@@ -1170,16 +1325,16 @@ private fun AshirDeveloperCreditsFullScreenOverlay(
                     color = FireOrange
                 )
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 Text(
-                    text = "Crafted with love by Ashir ♥️ to deliver ultra-fast worldwide VPN tunnels, zero-downtime WhatsApp & full-app support, and a lightweight iPhone Glass UI.",
+                    text = "Crafted with love by Ashir ♥️ to deliver native Wi-Fi speed tunnels, Top Status Bar 1-tap controls, and an aesthetic iOS Frosted Glass UI.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
                 )
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1199,11 +1354,11 @@ private fun AshirDeveloperCreditsFullScreenOverlay(
                                 imageVector = Icons.Default.Security,
                                 contentDescription = null,
                                 tint = SkyBluePrimary,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(15.dp)
                             )
                             Spacer(modifier = Modifier.width(5.dp))
                             Text(
-                                text = "100% App Uptime",
+                                text = "Wi-Fi Warp",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontWeight = FontWeight.Bold
                                 ),
@@ -1226,7 +1381,7 @@ private fun AshirDeveloperCreditsFullScreenOverlay(
                                 imageVector = Icons.Default.Code,
                                 contentDescription = null,
                                 tint = FireOrange,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(15.dp)
                             )
                             Spacer(modifier = Modifier.width(5.dp))
                             Text(
@@ -1240,22 +1395,24 @@ private fun AshirDeveloperCreditsFullScreenOverlay(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
                 Button(
                     onClick = onDismiss,
                     colors = ButtonDefaults.buttonColors(containerColor = FireOrange),
                     shape = RoundedCornerShape(14.dp),
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(46.dp)
+                        .height(42.dp)
                         .testTag("close_developer_credits_button")
                 ) {
                     Text(
-                        text = "Awesome ♥️",
-                        style = MaterialTheme.typography.titleMedium.copy(
+                        text = "Close",
+                        style = MaterialTheme.typography.labelLarge.copy(
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = Color.White,
+                            fontSize = 13.sp
                         )
                     )
                 }
@@ -1278,12 +1435,12 @@ private fun AddCustomNodeFullScreenOverlay(
     var cityName by remember { mutableStateOf("Helsinki") }
     var ipAddress by remember { mutableStateOf("95.216.144.18") }
     var portText by remember { mutableStateOf("443") }
-    var operatorName by remember { mutableStateOf("Custom Ultra Tunnel") }
+    var operatorName by remember { mutableStateOf("Custom Wi-Fi Warp") }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.56f))
+            .background(Color.Black.copy(alpha = 0.54f))
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -1294,11 +1451,11 @@ private fun AddCustomNodeFullScreenOverlay(
     ) {
         IosGlassCard(
             isDark = isDark,
-            cornerRadius = 28.dp,
+            cornerRadius = 26.dp,
             accentGlowColor = SkyBluePrimary,
             modifier = Modifier
                 .fillMaxWidth()
-                .widthIn(max = 390.dp)
+                .widthIn(max = 380.dp)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -1308,13 +1465,13 @@ private fun AddCustomNodeFullScreenOverlay(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 22.dp, vertical = 22.dp),
+                    .padding(horizontal = 20.dp, vertical = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    text = "Add Custom Ultra Tunnel",
+                    text = "Add Custom Server",
                     style = MaterialTheme.typography.titleLarge.copy(
-                        fontWeight = FontWeight.ExtraBold
+                        fontWeight = FontWeight.Bold
                     ),
                     color = MaterialTheme.colorScheme.onSurface
                 )
@@ -1352,7 +1509,7 @@ private fun AddCustomNodeFullScreenOverlay(
                     OutlinedTextField(
                         value = ipAddress,
                         onValueChange = { ipAddress = it },
-                        label = { Text("Public IP / Host") },
+                        label = { Text("IP / Host") },
                         singleLine = true,
                         modifier = Modifier
                             .weight(1f)
@@ -1387,12 +1544,13 @@ private fun AddCustomNodeFullScreenOverlay(
                     OutlinedButton(
                         onClick = onDismiss,
                         shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
                         modifier = Modifier
                             .weight(1f)
-                            .height(44.dp)
+                            .height(42.dp)
                             .testTag("cancel_add_custom_node_button")
                     ) {
-                        Text("Cancel")
+                        Text("Cancel", style = MaterialTheme.typography.labelLarge)
                     }
                     Button(
                         onClick = {
@@ -1400,13 +1558,18 @@ private fun AddCustomNodeFullScreenOverlay(
                             onConfirmAdd(countryName, countryCode, cityName, ipAddress, parsedPort, operatorName)
                         },
                         shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = SkyBluePrimary),
                         modifier = Modifier
                             .weight(1f)
-                            .height(44.dp)
+                            .height(42.dp)
                             .testTag("confirm_add_custom_node_button")
                     ) {
-                        Text("Add & Connect", color = Color.White)
+                        Text(
+                            text = "Add",
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                        )
                     }
                 }
             }

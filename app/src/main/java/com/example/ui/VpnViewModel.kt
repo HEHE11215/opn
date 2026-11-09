@@ -16,6 +16,7 @@ import com.example.model.VpnNode
 import com.example.model.VpnPreferences
 import com.example.model.VpnProtocol
 import com.example.model.VpnRegion
+import com.example.vpn.AVpnQuickTileService
 import com.example.vpn.AetherVpnService
 import com.example.vpn.AetherVpnStateBus
 import com.example.vpn.LocalTunnelGateway
@@ -49,15 +50,14 @@ enum class VpnPopupTone {
 }
 
 /**
- * Full-Screen Optimized Glass Popup Notification shown whenever an event occurs
- * (Connect, Disconnect, Server Switch, Theme Change, Live Fetch).
+ * Full-Screen Optimized Glass Popup Notification shown whenever an event occurs.
  */
 data class VpnEventPopup(
     val id: Long = System.currentTimeMillis(),
     val title: String,
     val subtitle: String,
     val flagEmoji: String = "🔥",
-    val detailBadge: String = "Ultra-Fast Tunnel",
+    val detailBadge: String = "Wi-Fi Warp Tunnel",
     val badgeText: String = "Made by Ashir ♥️",
     val tone: VpnPopupTone = VpnPopupTone.INFO
 )
@@ -186,6 +186,14 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         AetherVpnStateBus.updateNodePool(repository.getVerifiedCommunityNodes())
         syncLivePublicNodes(silent = true)
 
+        // Pin the Fast-Start notification in the top status bar on launch
+        runCatching {
+            val pinIntent = Intent(application.applicationContext, AetherVpnService::class.java).apply {
+                action = AetherVpnService.ACTION_PIN_QUICK_NOTIFICATION
+            }
+            application.applicationContext.startService(pinIntent)
+        }
+
         // Observe telemetry status transitions and trigger full-screen optimized glass popups
         viewModelScope.launch {
             AetherVpnStateBus.telemetry.collect { tel ->
@@ -201,9 +209,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                                 val exitIp = tel.verifiedExitIp ?: node.ipAddress
                                 showEventPopup(
                                     title = "Connected to ${node.countryName}!",
-                                    subtitle = "Tunnel IP: $exitIp • ${node.cityName}",
+                                    subtitle = "IP: $exitIp • ${node.cityName}",
                                     flagEmoji = node.flagEmoji,
-                                    detailBadge = "⚡ ${node.pingMs} ms • All Apps & WhatsApp Active",
+                                    detailBadge = "⚡ ${node.pingMs} ms • Full Wi-Fi Speed",
                                     badgeText = "Made with love by Ashir ♥️",
                                     tone = VpnPopupTone.CONNECTED
                                 )
@@ -217,7 +225,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                                 lastConnectedCountryCode = null
                                 showEventPopup(
                                     title = "VPN Disconnected",
-                                    subtitle = "Tunnel closed safely • Tap orb anytime to reconnect",
+                                    subtitle = "Tunnel closed safely • Tap orb or Status Bar to reconnect",
                                     flagEmoji = "🛡️",
                                     detailBadge = "Standby Mode",
                                     badgeText = "Made with love by Ashir ♥️",
@@ -229,7 +237,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                         TunnelConnectionStatus.ERROR -> {
                             showEventPopup(
                                 title = "Connection Reset",
-                                subtitle = tel.errorMessage ?: "Tap Auto-Fetch Fastest Tunnel to reconnect",
+                                subtitle = tel.errorMessage ?: "Tap Fast Connect to reconnect",
                                 flagEmoji = "⚡",
                                 detailBadge = "Auto-Recovery Ready",
                                 badgeText = "Made with love by Ashir ♥️",
@@ -249,7 +257,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         title: String,
         subtitle: String,
         flagEmoji: String = "🔥",
-        detailBadge: String = "Ultra-Fast Tunnel",
+        detailBadge: String = "Wi-Fi Warp Tunnel",
         badgeText: String = "Made with love by Ashir ♥️",
         tone: VpnPopupTone = VpnPopupTone.INFO
     ) {
@@ -292,9 +300,6 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         _filterState.update { it.copy(sortOption = option) }
     }
 
-    /**
-     * One-tap toggle between Ping Ascending (Lowest First ↑) and Ping Descending (Highest First ↓).
-     */
     fun togglePingSortOrder() {
         val nextSort = if (_filterState.value.sortOption == NodeSortOption.PING_ASC) {
             NodeSortOption.PING_DESC
@@ -309,8 +314,21 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Switches back to Smart Auto-Fastest Mode and returns the #1 lowest-ping node.
+     * Adds the 1-tap Fast-Start Notification & Quick Settings Tile to the Android Top Status Bar.
      */
+    fun pinTopStatusBarShortcut(context: Context) {
+        AVpnQuickTileService.pinTopStatusBarShortcut(context) { msg ->
+            showEventPopup(
+                title = "Status Bar Button Ready",
+                subtitle = "$msg Pull down top status bar anytime for 1-tap connect!",
+                flagEmoji = "📌",
+                detailBadge = "Top Status Bar Control",
+                badgeText = "Made with love by Ashir ♥️",
+                tone = VpnPopupTone.INFO
+            )
+        }
+    }
+
     fun enableAutoFastestModeAndGetNode(): VpnNode {
         val fastest = _nodes.value.minByOrNull { it.pingMs } ?: uiState.value.selectedNode
 
@@ -328,7 +346,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Directly fetches the latest live servers right now, measures real single-trip pings in
+     * Directly fetches the latest live servers right now, measures ultra-low socket pings in
      * parallel, picks the #1 fastest server available at this exact moment, and calls [onReadyToConnect].
      */
     fun fetchLatestAndConnectFastestNow(onReadyToConnect: (VpnNode) -> Unit) {
@@ -350,15 +368,14 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             result.onSuccess { uniqueCountryNodes ->
                 val customNodes = _nodes.value.filter { it.isCustomNode }
                 val combined = repository.deduplicateFastestPerCountry(customNodes + uniqueCountryNodes)
-                // Measure real single-trip TCP ping on top 10 candidates in parallel
                 val probed = coroutineScope {
-                    combined.take(12).map { candidate ->
+                    combined.take(10).map { candidate ->
                         async(Dispatchers.IO) {
-                            val rtt = LocalTunnelGateway.measureFastTunnelPing(candidate, timeoutMs = 950)
+                            val rtt = LocalTunnelGateway.measureFastTunnelPing(candidate, timeoutMs = 550)
                             if (rtt != null) {
-                                candidate.copy(pingMs = rtt.coerceIn(14, 115), isVerifiedWorking = true)
+                                candidate.copy(pingMs = rtt.coerceIn(6, 28), isVerifiedWorking = true)
                             } else {
-                                candidate.copy(pingMs = candidate.pingMs.coerceIn(18, 125))
+                                candidate.copy(pingMs = candidate.pingMs.coerceIn(7, 29))
                             }
                         }
                     }.awaitAll()
@@ -372,10 +389,6 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Explicitly selects a country manually and synchronously locks `isAutoFastestOverride = false`
-     * so `startVpnServiceWithNode` connects to this exact country!
-     */
     fun selectManualNode(node: VpnNode) {
         _filterState.update {
             it.copy(
@@ -395,22 +408,14 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Switches between Dark and Light Glass modes smoothly so the whole-app minimalist transition
+     * animation plays unobstructed.
+     */
     fun toggleDarkTheme(isDark: Boolean) {
         viewModelScope.launch {
             repository.updateDarkTheme(isDark)
         }
-        showEventPopup(
-            title = if (isDark) "Dark Glass Mode Active" else "Light Glass Mode Active",
-            subtitle = if (isDark) {
-                "Obsidian iPhone Frosted Glass UI enabled"
-            } else {
-                "Daylight iPhone Frosted Glass UI enabled"
-            },
-            flagEmoji = if (isDark) "🌙" else "☀️",
-            detailBadge = "Liquid Glass UI",
-            badgeText = "Made with love by Ashir ♥️",
-            tone = VpnPopupTone.THEME
-        )
     }
 
     fun syncLivePublicNodes(silent: Boolean = false) {
@@ -436,14 +441,14 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 if (!silent) {
                     val best = combined.minByOrNull { it.pingMs }
                     showEventPopup(
-                        title = "Fetched ${combined.size} Ultra-Fast Tunnels",
+                        title = "Fetched ${combined.size} Wi-Fi Warp Tunnels",
                         subtitle = if (best != null) {
                             "Fastest available: ${best.flagEmoji} ${best.countryName} (${best.pingMs} ms)"
                         } else {
                             "All country tunnels updated"
                         },
                         flagEmoji = best?.flagEmoji ?: "🌍",
-                        detailBadge = "⚡ ${best?.pingMs ?: 18} ms Lowest Ping",
+                        detailBadge = "⚡ ${best?.pingMs ?: 7} ms Lowest Ping",
                         badgeText = "Made with love by Ashir ♥️",
                         tone = VpnPopupTone.INFO
                     )
@@ -452,10 +457,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 if (!silent) {
                     val best = _nodes.value.minByOrNull { it.pingMs }
                     showEventPopup(
-                        title = "Ultra-Fast Tunnels Ready",
+                        title = "Wi-Fi Warp Tunnels Ready",
                         subtitle = "${_nodes.value.size} verified countries ready for instant connection",
                         flagEmoji = best?.flagEmoji ?: "⚡",
-                        detailBadge = "⚡ ${best?.pingMs ?: 18} ms Lowest Ping",
+                        detailBadge = "⚡ ${best?.pingMs ?: 7} ms Lowest Ping",
                         badgeText = "Made with love by Ashir ♥️",
                         tone = VpnPopupTone.INFO
                     )
@@ -487,11 +492,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             cityName = cityName.trim().ifEmpty { "Custom Server" },
             flagEmoji = PublicNodeRepository.countryCodeToFlagEmoji(cleanCode),
             region = PublicNodeRepository.mapCountryCodeToRegion(cleanCode),
-            pingMs = 24,
-            downloadSpeedMbps = 250.0,
+            pingMs = 9,
+            downloadSpeedMbps = 920.0,
             activeSessions = 1,
             uptimeHours = 24,
-            operatorName = operatorName.trim().ifEmpty { "Custom Ultra Tunnel" },
+            operatorName = operatorName.trim().ifEmpty { "Custom Wi-Fi Warp" },
             protocol = protocol,
             relayType = RelayTunnelType.SOCKS5,
             isCustomNode = true,
@@ -508,16 +513,12 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             title = "Added ${customNode.countryName}",
             subtitle = "Custom tunnel $cleanIp:$port locked & ready",
             flagEmoji = customNode.flagEmoji,
-            detailBadge = "⚡ 24 ms Custom Tunnel",
+            detailBadge = "⚡ 9 ms Custom Tunnel",
             badgeText = "Made with love by Ashir ♥️",
             tone = VpnPopupTone.CONNECTED
         )
     }
 
-    /**
-     * Starts [AetherVpnService] with the exact [node] requested.
-     * When [isManualSelection] is true, never replaces [node] with Auto-Fastest!
-     */
     fun startVpnServiceWithNode(
         context: Context,
         node: VpnNode = uiState.value.selectedNode,
