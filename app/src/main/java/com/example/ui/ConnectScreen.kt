@@ -469,7 +469,6 @@ fun ConnectScreen(
     onToggleConnection: () -> Unit,
     onConnectSmartFastest: () -> Unit,
     onOpenNodeSelector: () -> Unit,
-    onAddTopStatusBarShortcut: () -> Unit = {},
     onOpenDeveloperCredits: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -600,7 +599,7 @@ fun ConnectScreen(
                                         }
                                         Spacer(modifier = Modifier.height(2.dp))
                                         Text(
-                                            text = "IP: $liveExitIp • ⚡ ${displayNode.pingMs} ms • Full Wi-Fi Speed",
+                                            text = "IP: $liveExitIp • ⚡ ${displayNode.pingMs} ms Live • All Apps Active",
                                             style = MaterialTheme.typography.labelSmall.copy(
                                                 fontFamily = JetBrainsMonoFontFamily
                                             ),
@@ -640,7 +639,7 @@ fun ConnectScreen(
                                         )
                                         Spacer(modifier = Modifier.height(3.dp))
                                         Text(
-                                            text = "${displayNode.flagEmoji} ${displayNode.countryName} • ⚡ ${displayNode.pingMs} ms • Wi-Fi Warp",
+                                            text = "${displayNode.flagEmoji} ${displayNode.countryName} • ⚡ ${displayNode.pingMs} ms Live • Wi-Fi Warp",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             textAlign = TextAlign.Center
@@ -652,45 +651,26 @@ fun ConnectScreen(
 
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        // Compact 2-Button Glass Row with short labels & balanced margins/padding
-                        Row(
+                        // Compact Animated Glass Fast Connect Pill Button with clean margins & padding
+                        AnimatedGlassActionPillButton(
+                            text = if (uiState.isSyncingApi) {
+                                "Syncing…"
+                            } else if (isConnected) {
+                                "Fast Switch"
+                            } else {
+                                "Fast Connect"
+                            },
+                            icon = Icons.Default.Bolt,
+                            isDark = isDark,
+                            accentColor = if (isConnected) FireOrange else SkyBluePrimary,
+                            isPrimaryFilled = !isConnected,
+                            isLoading = uiState.isSyncingApi,
+                            onClick = onConnectSmartFastest,
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            AnimatedGlassActionPillButton(
-                                text = if (uiState.isSyncingApi) {
-                                    "Syncing…"
-                                } else if (isConnected) {
-                                    "Fast Switch"
-                                } else {
-                                    "Fast Connect"
-                                },
-                                icon = Icons.Default.Bolt,
-                                isDark = isDark,
-                                accentColor = if (isConnected) FireOrange else SkyBluePrimary,
-                                isPrimaryFilled = !isConnected,
-                                isLoading = uiState.isSyncingApi,
-                                onClick = onConnectSmartFastest,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("smart_fastest_button")
-                            )
-
-                            AnimatedGlassActionPillButton(
-                                text = "Status Bar",
-                                icon = Icons.Default.NotificationsActive,
-                                isDark = isDark,
-                                accentColor = EmeraldConnected,
-                                isPrimaryFilled = false,
-                                onClick = onAddTopStatusBarShortcut,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("add_status_bar_shortcut_button")
-                            )
-                        }
+                                .fillMaxWidth(0.76f)
+                                .padding(horizontal = 4.dp)
+                                .testTag("smart_fastest_button")
+                        )
                     }
                 }
             }

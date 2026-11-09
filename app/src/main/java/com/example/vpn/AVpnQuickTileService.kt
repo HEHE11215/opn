@@ -1,17 +1,13 @@
 package com.example.vpn
 
 import android.app.PendingIntent
-import android.content.ComponentName
-import android.content.Context
 import android.content.Intent
 import android.graphics.drawable.Icon
 import android.net.VpnService
 import android.os.Build
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
-import android.app.StatusBarManager
 import com.example.MainActivity
-import com.example.R
 import com.example.data.PublicNodeRepository
 import com.example.model.TunnelConnectionStatus
 import kotlinx.coroutines.CoroutineScope
@@ -22,9 +18,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 /**
- * Android Top Status Bar Quick Settings Tile (`AVpnQuickTileService`) for **A VPN** (By Ashir ♥️).
- *
- * Allows 1-tap VPN Connect / Disconnect directly from the pull-down Status Bar / Control Center shade.
+ * Android Quick Settings Tile (`AVpnQuickTileService`) for **A VPN** (By Ashir ♥️).
  */
 class AVpnQuickTileService : TileService() {
 
@@ -68,7 +62,6 @@ class AVpnQuickTileService : TileService() {
             return
         }
 
-        // Check if VpnService permission is already granted
         val prepareIntent = try {
             VpnService.prepare(this)
         } catch (_: Exception) {
@@ -76,7 +69,6 @@ class AVpnQuickTileService : TileService() {
         }
 
         if (prepareIntent == null) {
-            // Directly start the fastest Wi-Fi Warp tunnel from the status bar without opening UI!
             val repo = PublicNodeRepository(applicationContext)
             val bestNode = AetherVpnStateBus.nodePool.value.minByOrNull { it.pingMs }
                 ?: repo.getVerifiedCommunityNodes().first()
@@ -109,7 +101,6 @@ class AVpnQuickTileService : TileService() {
                 subtitle = "${bestNode.flagEmoji} ${bestNode.pingMs} ms"
             )
         } else {
-            // Launch MainActivity with auto-connect intent flag
             val activityIntent = Intent(this, MainActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 putExtra(MainActivity.EXTRA_FAST_START_CONNECT, true)
@@ -177,38 +168,5 @@ class AVpnQuickTileService : TileService() {
         telemetryJob?.cancel()
         tileScope.cancel()
         super.onDestroy()
-    }
-
-    companion object {
-        /**
-         * Requests Android 13+ StatusBarManager to add the Quick Settings Tile to the top status bar,
-         * and always pins the Fast-Start Quick Connect Notification to the top status bar.
-         */
-        fun pinTopStatusBarShortcut(context: Context, onResult: (String) -> Unit) {
-            // 1. Always post/refresh the Persistent Fast-Start Notification in the top status bar
-            val pinIntent = Intent(context, AetherVpnService::class.java).apply {
-                action = AetherVpnService.ACTION_PIN_QUICK_NOTIFICATION
-            }
-            try {
-                context.startService(pinIntent)
-            } catch (_: Exception) {
-            }
-
-            // 2. On Android 13+ (API 33+), also prompt the native Quick Settings Tile adder
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                try {
-                    val statusBarManager = context.getSystemService(StatusBarManager::class.java)
-                    statusBarManager?.requestAddTileService(
-                        ComponentName(context, AVpnQuickTileService::class.java),
-                        context.getString(R.string.app_name),
-                        Icon.createWithResource(context, android.R.drawable.ic_lock_lock),
-                        context.mainExecutor
-                    ) { _ -> }
-                } catch (_: Exception) {
-                }
-            }
-
-            onResult("Fast-Start button added to Top Status Bar!")
-        }
     }
 }

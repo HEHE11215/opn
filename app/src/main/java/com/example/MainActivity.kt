@@ -357,39 +357,6 @@ fun AVpnRootApp(
                         }
                     },
                     actions = {
-                        // Top Status Bar Quick-Connect Pin Button
-                        Surface(
-                            onClick = { viewModel.pinTopStatusBarShortcut(context) },
-                            shape = RoundedCornerShape(50),
-                            color = EmeraldConnected.copy(alpha = 0.14f),
-                            border = BorderStroke(1.dp, EmeraldConnected.copy(alpha = 0.38f)),
-                            modifier = Modifier
-                                .padding(end = 6.dp)
-                                .height(32.dp)
-                                .testTag("topbar_status_bar_shortcut_button")
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 9.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.NotificationsActive,
-                                    contentDescription = "Add Status Bar Button",
-                                    tint = EmeraldConnected,
-                                    modifier = Modifier.size(13.dp)
-                                )
-                                Spacer(modifier = Modifier.width(3.dp))
-                                Text(
-                                    text = "Top Bar",
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 10.sp
-                                    ),
-                                    color = EmeraldConnected
-                                )
-                            }
-                        }
-
                         // Compact "Ashir ♥️" Developer Pill
                         Surface(
                             onClick = { viewModel.setShowDeveloperCreditsModal(true) },
@@ -508,9 +475,6 @@ fun AVpnRootApp(
                             },
                             onOpenNodeSelector = {
                                 viewModel.selectTab(AetherTab.NODES)
-                            },
-                            onAddTopStatusBarShortcut = {
-                                viewModel.pinTopStatusBarShortcut(context)
                             },
                             onOpenDeveloperCredits = {
                                 viewModel.setShowDeveloperCreditsModal(true)
