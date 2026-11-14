@@ -3,6 +3,7 @@ package com.example.ui
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -25,6 +26,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,6 +39,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.RocketLaunch
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Tune
@@ -47,6 +50,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Surface
@@ -190,6 +194,7 @@ fun ConnectScreen(
     onToggleAutoConnectOnStartup: (Boolean) -> Unit = {},
     onRequestAddQuickTile: () -> Unit = {},
     onRenewSshAccount: () -> Unit = {},
+    onProbeSelectedLatency: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val status = uiState.telemetry.status
@@ -321,7 +326,11 @@ fun ConnectScreen(
                             TunnelConnectionStatus.CONNECTING -> {
                                 val pingLabel = if (displayNode.pingMs > 0) "${displayNode.pingMs} ms" else "Verifying…"
                                 Text(
-                                    text = "Provisioning 4-Day SSH/WG & Starting TUN0…",
+                                    text = if (displayNode.isSshProtocol) {
+                                        "Opening SSH / TLS Tunnel & Starting TUN0…"
+                                    } else {
+                                        "Starting Encrypted TUN0 Tunnel…"
+                                    },
                                     style = MaterialTheme.typography.titleLarge.copy(
                                         fontWeight = FontWeight.Bold
                                     ),
@@ -371,7 +380,7 @@ fun ConnectScreen(
                                 )
                                 Spacer(modifier = Modifier.height(3.dp))
                                 val standbySubtitle = if (displayNode.ipAddress.isBlank()) {
-                                    "Auto-provisioning 4-day SSH/WG high-bandwidth servers…"
+                                    "Fetching live internet SSH, TLS & high-BW VPN servers…"
                                 } else {
                                     "${displayNode.flagEmoji} ${displayNode.countryName} • ⚡ $pingLabel • ${displayNode.remainingValidityLabel()}"
                                 }
@@ -485,7 +494,17 @@ fun ConnectScreen(
             )
         }
 
-        // 2b. Auto-Provisioned 4-Day Free SSH / WireGuard High-Bandwidth Account Card
+        // 2a. Real-Time Latency Monitor Gauge / Progress Bar for Selected Relay
+        item {
+            RealTimeLatencyMonitorCard(
+                node = displayNode,
+                isProbing = uiState.isProbingLatency,
+                isSyncing = uiState.isSyncingApi,
+                onProbeNow = onProbeSelectedLatency
+            )
+        }
+
+        // 2b. Live Free SSH / TLS / UDP Account Card
         item {
             EphemeralSshAccountCard(
                 node = displayNode,
@@ -574,20 +593,238 @@ fun ConnectScreen(
     }
 }
 
+/**
+ * Clean Material 3 Real-Time Latency Monitor Component (`RealTimeLatencyMonitorCard`).
+ * Displays genuine TCP handshake latency in milliseconds for the currently selected (or active)
+ * relay node using a color-coded progress bar gauge (`0 ms`–`400 ms+`).
+ */
 @Composable
-fun EphemeralSshAccountCard(
+fun RealTimeLatencyMonitorCard(
     node: VpnNode,
-    onRenewAccount: () -> Unit,
+    isProbing: Boolean = false,
+    isSyncing: Boolean = false,
+    onProbeNow: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val accountUser = node.username.ifEmpty { "ssh-auto-highbw" }
-    val validityBadge = node.remainingValidityLabel()
+    val pingMs = node.pingMs
+    val hasValidPing = pingMs > 0
+    val (tierLabel, tierColor) = when {
+        isProbing -> "Probing…" to AmberHandshaking
+        !hasValidPing && isSyncing -> "Scanning…" to MaterialTheme.colorScheme.primary
+        !hasValidPing -> "Pending" to MaterialTheme.colorScheme.onSurfaceVariant
+        pingMs <= 75 -> "Ultra-Fast" to EmeraldConnected
+        pingMs <= 150 -> "Optimal" to MaterialTheme.colorScheme.primary
+        pingMs <= 260 -> "Moderate" to AmberHandshaking
+        else -> "High Ping" to RoseAlert
+    }
+
+    // Map 0..400ms smoothly onto [0.06f..1.0f] progress gauge; when unknown, show minimal baseline
+    val targetFraction = if (hasValidPing) {
+        (pingMs / 400f).coerceIn(0.06f, 1.0f)
+    } else {
+        0.04f
+    }
+    val animatedFraction by animateFloatAsState(
+        targetValue = targetFraction,
+        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+        label = "latency_gauge_fraction"
+    )
+
+    val pingReadout = when {
+        hasValidPing -> "$pingMs ms"
+        isProbing || isSyncing -> "Testing…"
+        else -> "-- ms"
+    }
+
+    val relaySummary = if (node.ipAddress.isNotBlank()) {
+        "${node.flagEmoji} ${node.countryName} (${node.ipAddress}:${node.port})"
+    } else {
+        "Selecting fastest available relay…"
+    }
 
     M3SectionCard(
         cornerRadius = 16.dp,
         modifier = modifier
             .fillMaxWidth()
             .widthIn(max = 600.dp)
+            .semantics {
+                contentDescription = "Real-time latency monitor for ${node.countryName}: $pingReadout, $tierLabel"
+            }
+            .testTag("realtime_latency_monitor_card")
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = tierColor.copy(alpha = 0.14f),
+                    modifier = Modifier.size(38.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.Speed,
+                            contentDescription = "Latency gauge icon",
+                            tint = tierColor,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Latency Monitor",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.Bold
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = tierColor.copy(alpha = 0.14f),
+                            modifier = Modifier
+                                .wrapContentWidth(unbounded = true)
+                                .testTag("latency_quality_badge")
+                        ) {
+                            Text(
+                                text = tierLabel,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 10.sp
+                                ),
+                                color = tierColor,
+                                maxLines = 1,
+                                softWrap = false,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    Text(
+                        text = relaySummary,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Text(
+                    text = pingReadout,
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontWeight = FontWeight.ExtraBold
+                    ),
+                    color = tierColor,
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.testTag("latency_ping_value_text")
+                )
+            }
+
+            // Simple Material 3 Linear Latency Gauge Bar
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                LinearProgressIndicator(
+                    progress = { animatedFraction },
+                    color = tierColor,
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(10.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .testTag("latency_gauge_bar")
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "0 ms",
+                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = JetBrainsMonoFontFamily),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "150 ms",
+                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = JetBrainsMonoFontFamily),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "400 ms+",
+                            style = MaterialTheme.typography.labelSmall.copy(fontFamily = JetBrainsMonoFontFamily),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Surface(
+                            onClick = onProbeNow,
+                            enabled = !isProbing && node.ipAddress.isNotBlank(),
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("latency_ping_now_button")
+                        ) {
+                            Text(
+                                text = if (isProbing) "…" else "Ping",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                maxLines = 1,
+                                softWrap = false,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun EphemeralSshAccountCard(
+    node: VpnNode,
+    onRenewAccount: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val hasActiveSsh = node.isSshProtocol && node.hasValidEphemeralAccount()
+    val badgeText = if (hasActiveSsh) {
+        node.remainingValidityLabel()
+    } else if (node.isAccountExpired()) {
+        "Expired"
+    } else {
+        "Auto-Fetch"
+    }
+    val badgeColor = when {
+        node.isAccountExpired() -> RoseAlert
+        hasActiveSsh -> EmeraldConnected
+        else -> MaterialTheme.colorScheme.primary
+    }
+
+    M3SectionCard(
+        cornerRadius = 16.dp,
+        modifier = modifier
+            .fillMaxWidth()
+            .widthIn(max = 600.dp)
+            .clickable(onClick = onRenewAccount)
             .testTag("ephemeral_ssh_account_card")
     ) {
         Row(
@@ -599,14 +836,14 @@ fun EphemeralSshAccountCard(
         ) {
             Surface(
                 shape = CircleShape,
-                color = EmeraldConnected.copy(alpha = 0.14f),
+                color = badgeColor.copy(alpha = 0.14f),
                 modifier = Modifier.size(40.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         imageVector = Icons.Default.Lock,
                         contentDescription = null,
-                        tint = EmeraldConnected,
+                        tint = badgeColor,
                         modifier = Modifier.size(20.dp)
                     )
                 }
@@ -618,7 +855,7 @@ fun EphemeralSshAccountCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "Free SSH / WG Account",
+                        text = "Free SSH / TLS / UDP",
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontWeight = FontWeight.Bold
                         ),
@@ -629,15 +866,16 @@ fun EphemeralSshAccountCard(
                     )
                     Surface(
                         shape = RoundedCornerShape(6.dp),
-                        color = EmeraldConnected.copy(alpha = 0.14f)
+                        color = badgeColor.copy(alpha = 0.14f),
+                        modifier = Modifier.wrapContentWidth(unbounded = true)
                     ) {
                         Text(
-                            text = validityBadge,
+                            text = badgeText,
                             style = MaterialTheme.typography.labelSmall.copy(
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 10.sp
                             ),
-                            color = EmeraldConnected,
+                            color = badgeColor,
                             maxLines = 1,
                             softWrap = false,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
@@ -646,7 +884,11 @@ fun EphemeralSshAccountCard(
                 }
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "ID: $accountUser • Auto-fetches new 4-day high-bandwidth session on connect",
+                    text = if (hasActiveSsh) {
+                        "${node.providerName.ifEmpty { "SSH-2" }} • User: ${node.username} • TLS ${node.tlsPort} • UDP ${node.udpPort}"
+                    } else {
+                        "Tap Fetch SSH to grab/create a live free 1–7d SSH TLS/UDP account (auto-rotates on expiry)"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
@@ -667,7 +909,7 @@ fun EphemeralSshAccountCard(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
                     Text(
-                        text = "New 4d",
+                        text = if (node.isAccountExpired()) "Renew" else "Fetch SSH",
                         style = MaterialTheme.typography.labelMedium.copy(
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -1002,11 +1244,13 @@ private fun ConnectionLogShortcutCard(
                         ),
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
-                        softWrap = false
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
                     Surface(
                         shape = RoundedCornerShape(6.dp),
-                        color = accent.copy(alpha = 0.14f)
+                        color = accent.copy(alpha = 0.14f),
+                        modifier = Modifier.wrapContentWidth(unbounded = true)
                     ) {
                         Text(
                             text = if (issueCount > 0) "$issueCount alert" else "$logCount logs",

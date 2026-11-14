@@ -132,6 +132,7 @@ class LocalTunnelGateway(
     fun stop() {
         acceptJob?.cancel()
         acceptJob = null
+        SshTunnelManager.closeAllSessions()
         try {
             serverSocket?.close()
         } catch (_: Exception) {
@@ -689,189 +690,233 @@ class LocalTunnelGateway(
                 )
             }
 
-            val orderedTypes = listOf(node.relayType, RelayTunnelType.SOCKS5, RelayTunnelType.HTTP_CONNECT).distinct()
-            val targetHost = "api.ipify.org"
-            val targetPort = 443
-            val resolvedTargetIpv4 = resolveIpv4Protected(targetHost, protectDatagram)
+            if (node.isSshProtocol) {
+                val sshOutcome = SshTunnelManager.verifySshNodeEndToEndTls(
+                    node = node,
+                    deviceDirectIp = deviceDirectIp,
+                    timeoutMs = maxOf(timeoutMs, 5500),
+                    protectSocket = protectSocket
+                )
+                return if (sshOutcome.success && !sshOutcome.exitIp.isNullOrBlank()) {
+                    DetailedVerificationOutcome(
+                        result = EndToEndVerificationResult(
+                            relayType = node.relayType,
+                            realTcpPingMs = sshOutcome.tcpHandshakeMs.coerceAtLeast(1),
+                            verifiedExitIp = sshOutcome.exitIp
+                        )
+                    )
+                } else {
+                    DetailedVerificationOutcome(
+                        failureStage = sshOutcome.failure?.stage ?: "SSH Handshake Failed",
+                        failureDetail = sshOutcome.failure?.detail ?: "Unable to open SSH direct-tcpip tunnel."
+                    )
+                }
+            }
+
+            val orderedTypes = if (node.isVerifiedWorking) {
+                listOf(node.relayType, RelayTunnelType.SOCKS5, RelayTunnelType.HTTP_CONNECT).distinct()
+            } else {
+                listOf(node.relayType, RelayTunnelType.SOCKS5, RelayTunnelType.HTTP_CONNECT).distinct()
+            }
+            val probeEndpoints = listOf(
+                "api.ipify.org" to "/?format=text",
+                "checkip.amazonaws.com" to "/",
+                "icanhazip.com" to "/"
+            )
+            val resolvedEndpoints = probeEndpoints.map { (host, path) ->
+                Triple(host, path, resolveIpv4Protected(host, protectDatagram))
+            }
             val authUser = if (node.isCustomNode) node.username else ""
             val authPass = if (node.isCustomNode) node.password else ""
+            val phaseTimeoutMs = timeoutMs.coerceIn(1500, 3200)
 
             var lastFailureStage = "Handshake Failed"
             var lastFailureDetail = "Relay closed connection without completing TLS probe."
 
-            for (candidateType in orderedTypes) {
-                val rawSocket = Socket()
-                try {
-                    protectSocket?.invoke(rawSocket)
-                    rawSocket.tcpNoDelay = true
-                    rawSocket.receiveBufferSize = 262_144
-                    rawSocket.sendBufferSize = 262_144
-                    rawSocket.soTimeout = timeoutMs
-
-                    val startNs = System.nanoTime()
+            protocolLoop@ for (candidateType in orderedTypes) {
+                var tcpUnreachable = false
+                for ((targetHost, targetPath, resolvedTargetIpv4) in resolvedEndpoints) {
+                    val targetPort = 443
+                    val rawSocket = Socket()
                     try {
-                        rawSocket.connect(InetSocketAddress(node.ipAddress, node.port), timeoutMs)
-                    } catch (e: java.net.SocketTimeoutException) {
-                        lastFailureStage = "TCP Timeout"
-                        lastFailureDetail = "TCP SYN timed out after ${timeoutMs}ms reaching ${node.ipAddress}:${node.port}."
-                        rawSocket.close()
-                        // If TCP itself cannot connect at all, don't retry other proxy protocols on the same closed/dead port
-                        break
-                    } catch (e: Exception) {
-                        lastFailureStage = "TCP Connect Refused"
-                        lastFailureDetail = "${e.javaClass.simpleName}: ${e.message ?: "Port ${node.port} unreachable"}"
-                        rawSocket.close()
-                        break
-                    }
+                        protectSocket?.invoke(rawSocket)
+                        rawSocket.tcpNoDelay = true
+                        rawSocket.receiveBufferSize = 262_144
+                        rawSocket.sendBufferSize = 262_144
+                        rawSocket.soTimeout = phaseTimeoutMs
+                        runCatching { rawSocket.setSoLinger(true, 0) }
 
-                    val realTcpPingMs = ((System.nanoTime() - startNs) / 1_000_000L)
-                        .toInt()
-                        .coerceAtLeast(1)
+                        val startNs = System.nanoTime()
+                        try {
+                            rawSocket.connect(InetSocketAddress(node.ipAddress, node.port), phaseTimeoutMs)
+                        } catch (e: java.net.SocketTimeoutException) {
+                            lastFailureStage = "TCP Timeout"
+                            lastFailureDetail = "TCP SYN timed out after ${phaseTimeoutMs}ms reaching ${node.ipAddress}:${node.port}."
+                            rawSocket.close()
+                            tcpUnreachable = true
+                            break
+                        } catch (e: Exception) {
+                            lastFailureStage = "TCP Connect Refused"
+                            lastFailureDetail = "${e.javaClass.simpleName}: ${e.message ?: "Port ${node.port} unreachable"}"
+                            rawSocket.close()
+                            tcpUnreachable = true
+                            break
+                        }
 
-                    val input = rawSocket.getInputStream()
-                    val output = rawSocket.getOutputStream()
+                        val realTcpPingMs = ((System.nanoTime() - startNs) / 1_000_000L)
+                            .toInt()
+                            .coerceAtLeast(1)
 
-                    val handshakeOk = when (candidateType) {
-                        RelayTunnelType.SSH_TUNNEL,
-                        RelayTunnelType.WIREGUARD_TUNNEL,
-                        RelayTunnelType.SOCKS5 -> performSocks5Connect(
-                            input = input,
-                            output = output,
-                            targetHost = targetHost,
-                            resolvedIpv4 = resolvedTargetIpv4,
-                            targetPort = targetPort,
-                            username = authUser,
-                            password = authPass
-                        )
-                        RelayTunnelType.SOCKS4 -> performSocks4aConnect(
-                            input = input,
-                            output = output,
-                            targetHost = targetHost,
-                            resolvedIpv4 = resolvedTargetIpv4,
-                            targetPort = targetPort
-                        )
-                        RelayTunnelType.HTTP_CONNECT -> performHttpConnect(
-                            input = input,
-                            output = output,
-                            targetHost = targetHost,
-                            targetPort = targetPort,
-                            username = authUser,
-                            password = authPass
-                        )
-                    }
+                        val input = rawSocket.getInputStream()
+                        val output = rawSocket.getOutputStream()
 
-                    if (!handshakeOk) {
-                        lastFailureStage = "${candidateType.badgeLabel} Handshake Failed"
-                        lastFailureDetail = if (authUser.isNotEmpty()) {
-                            "Relay rejected ${candidateType.badgeLabel} auth or refused CONNECT to $targetHost:$targetPort."
+                        val handshakeOk = when (candidateType) {
+                            RelayTunnelType.WIREGUARD_TUNNEL,
+                            RelayTunnelType.SOCKS5 -> performSocks5Connect(
+                                input = input,
+                                output = output,
+                                targetHost = targetHost,
+                                resolvedIpv4 = resolvedTargetIpv4,
+                                targetPort = targetPort,
+                                username = authUser,
+                                password = authPass
+                            )
+                            RelayTunnelType.SOCKS4 -> performSocks4aConnect(
+                                input = input,
+                                output = output,
+                                targetHost = targetHost,
+                                resolvedIpv4 = resolvedTargetIpv4,
+                                targetPort = targetPort
+                            )
+                            RelayTunnelType.HTTP_CONNECT -> performHttpConnect(
+                                input = input,
+                                output = output,
+                                targetHost = targetHost,
+                                targetPort = targetPort,
+                                username = authUser,
+                                password = authPass
+                            )
+                            RelayTunnelType.SSH_TUNNEL,
+                            RelayTunnelType.SSH_TLS,
+                            RelayTunnelType.SSH_WS -> false
+                        }
+
+                        if (!handshakeOk) {
+                            lastFailureStage = "${candidateType.badgeLabel} Handshake Failed"
+                            lastFailureDetail = if (authUser.isNotEmpty()) {
+                                "Relay rejected ${candidateType.badgeLabel} auth or refused CONNECT to $targetHost:$targetPort."
+                            } else {
+                                "Relay closed or rejected ${candidateType.badgeLabel} CONNECT tunnel to $targetHost:$targetPort."
+                            }
+                            rawSocket.close()
+                            // Try next relay protocol instead of repeating failed protocol on other probe hosts
+                            break
+                        }
+
+                        val sslSocket: SSLSocket = try {
+                            val sslFactory = SSLSocketFactory.getDefault() as SSLSocketFactory
+                            (sslFactory.createSocket(rawSocket, targetHost, targetPort, true) as SSLSocket).apply {
+                                soTimeout = phaseTimeoutMs
+                                startHandshake()
+                            }
+                        } catch (e: Exception) {
+                            lastFailureStage = "TLS Handshake Failed"
+                            lastFailureDetail = "${e.javaClass.simpleName}: ${e.message ?: "Unable to negotiate TLS via relay"}"
+                            try {
+                                rawSocket.close()
+                            } catch (_: Exception) {
+                            }
+                            // Try next backup echo endpoint before giving up on this protocol
+                            continue
+                        }
+
+                        val hostnameValid = HttpsURLConnection.getDefaultHostnameVerifier()
+                            .verify(targetHost, sslSocket.session)
+                        if (!hostnameValid) {
+                            lastFailureStage = "TLS Certificate Mismatch"
+                            lastFailureDetail = "Hostname verification failed for $targetHost (possible MITM/captive portal)."
+                            sslSocket.close()
+                            continue
+                        }
+
+                        val sslOut = sslSocket.getOutputStream()
+                        val sslIn = sslSocket.getInputStream()
+                        val httpReq = "GET $targetPath HTTP/1.1\r\nHost: $targetHost\r\nUser-Agent: AVPN/1.0\r\nConnection: close\r\n\r\n"
+                        sslOut.write(httpReq.toByteArray(Charsets.US_ASCII))
+                        sslOut.flush()
+
+                        val responseStream = ByteArrayOutputStream(512)
+                        val chunk = ByteArray(512)
+                        var readTimedOut = false
+                        while (responseStream.size() < 2048) {
+                            val n = try {
+                                sslIn.read(chunk)
+                            } catch (_: java.net.SocketTimeoutException) {
+                                readTimedOut = true
+                                -1
+                            } catch (_: Exception) {
+                                -1
+                            }
+                            if (n <= 0) break
+                            responseStream.write(chunk, 0, n)
+                        }
+                        sslSocket.close()
+
+                        val responseBytes = responseStream.toByteArray()
+                        if (responseBytes.isNotEmpty()) {
+                            val responseText = String(responseBytes, Charsets.ISO_8859_1)
+                            if (!responseText.startsWith("HTTP/1.") && !responseText.startsWith("HTTP/2")) {
+                                lastFailureStage = "Malformed Probe Response"
+                                lastFailureDetail = "Relay returned non-HTTP payload over TLS from $targetHost."
+                                continue
+                            }
+                            val statusLine = responseText.lineSequence().firstOrNull().orEmpty().trim()
+                            if (!statusLine.contains("200")) {
+                                // Common on public proxies when ipify returns 429; loop falls through to checkip.amazonaws.com / icanhazip.com!
+                                lastFailureStage = "HTTP Probe Error"
+                                lastFailureDetail = "$targetHost returned '$statusLine' instead of HTTP 200."
+                                continue
+                            }
+
+                            val body = responseText.substringAfter("\r\n\r\n", "").trim()
+                            val exitIp = ipv4Regex.find(body)?.groupValues?.getOrNull(1)
+                            if (exitIp == null) {
+                                lastFailureStage = "Invalid Exit IP Body"
+                                lastFailureDetail = "$targetHost HTTP 200 body did not include a valid IPv4 address."
+                                continue
+                            }
+                            if (!deviceDirectIp.isNullOrBlank() && exitIp == deviceDirectIp) {
+                                lastFailureStage = "Transparent Proxy Leak"
+                                lastFailureDetail = "Relay exposed real device IP ($deviceDirectIp) and was rejected."
+                                // Reject transparent proxy completely across all protocols
+                                break@protocolLoop
+                            }
+
+                            return DetailedVerificationOutcome(
+                                result = EndToEndVerificationResult(
+                                    relayType = candidateType,
+                                    realTcpPingMs = realTcpPingMs,
+                                    verifiedExitIp = exitIp
+                                )
+                            )
                         } else {
-                            "Relay closed or rejected ${candidateType.badgeLabel} CONNECT tunnel to $targetHost:$targetPort."
-                        }
-                        rawSocket.close()
-                        continue
-                    }
-
-                    val sslSocket: SSLSocket = try {
-                        val sslFactory = SSLSocketFactory.getDefault() as SSLSocketFactory
-                        (sslFactory.createSocket(rawSocket, targetHost, targetPort, true) as SSLSocket).apply {
-                            soTimeout = timeoutMs
-                            startHandshake()
+                            lastFailureStage = if (readTimedOut) "TLS Read Timeout" else "Empty Probe Response"
+                            lastFailureDetail = if (readTimedOut) {
+                                "TLS handshake succeeded, but relay stalled waiting for HTTPS response from $targetHost (${phaseTimeoutMs}ms)."
+                            } else {
+                                "Relay closed TLS stream before receiving HTTP headers from $targetHost."
+                            }
                         }
                     } catch (e: Exception) {
-                        lastFailureStage = "TLS Handshake Failed"
-                        lastFailureDetail = "${e.javaClass.simpleName}: ${e.message ?: "Unable to negotiate TLS via relay"}"
+                        lastFailureStage = "Tunnel Probe Exception"
+                        lastFailureDetail = "${e.javaClass.simpleName}: ${e.message ?: "Unexpected failure"}"
                         try {
                             rawSocket.close()
                         } catch (_: Exception) {
                         }
-                        continue
-                    }
-
-                    val hostnameValid = HttpsURLConnection.getDefaultHostnameVerifier()
-                        .verify(targetHost, sslSocket.session)
-                    if (!hostnameValid) {
-                        lastFailureStage = "TLS Certificate Mismatch"
-                        lastFailureDetail = "Hostname verification failed for $targetHost (possible MITM/captive portal)."
-                        sslSocket.close()
-                        continue
-                    }
-
-                    val sslOut = sslSocket.getOutputStream()
-                    val sslIn = sslSocket.getInputStream()
-                    val httpReq = "GET /?format=text HTTP/1.1\r\nHost: $targetHost\r\nUser-Agent: AVPN/1.0\r\nConnection: close\r\n\r\n"
-                    sslOut.write(httpReq.toByteArray(Charsets.US_ASCII))
-                    sslOut.flush()
-
-                    // Read entire response (headers + body may arrive across multiple TLS segments on US/EU relays)
-                    val responseStream = ByteArrayOutputStream(512)
-                    val chunk = ByteArray(512)
-                    var readTimedOut = false
-                    while (responseStream.size() < 2048) {
-                        val n = try {
-                            sslIn.read(chunk)
-                        } catch (_: java.net.SocketTimeoutException) {
-                            readTimedOut = true
-                            -1
-                        } catch (_: Exception) {
-                            -1
-                        }
-                        if (n <= 0) break
-                        responseStream.write(chunk, 0, n)
-                    }
-                    sslSocket.close()
-
-                    val responseBytes = responseStream.toByteArray()
-                    if (responseBytes.isNotEmpty()) {
-                        val responseText = String(responseBytes, Charsets.ISO_8859_1)
-                        if (!responseText.startsWith("HTTP/1.") && !responseText.startsWith("HTTP/2")) {
-                            lastFailureStage = "Malformed Probe Response"
-                            lastFailureDetail = "Relay returned non-HTTP payload over TLS."
-                            continue
-                        }
-                        val statusLine = responseText.lineSequence().firstOrNull().orEmpty().trim()
-                        if (!statusLine.contains("200")) {
-                            lastFailureStage = "HTTP Probe Error"
-                            lastFailureDetail = "Endpoint returned '$statusLine' instead of HTTP 200."
-                            continue
-                        }
-
-                        val body = responseText.substringAfter("\r\n\r\n", "").trim()
-                        val exitIp = ipv4Regex.find(body)?.groupValues?.getOrNull(1)
-                        if (exitIp == null) {
-                            lastFailureStage = "Invalid Exit IP Body"
-                            lastFailureDetail = "HTTP 200 body did not include a valid IPv4 address."
-                            continue
-                        }
-                        if (!deviceDirectIp.isNullOrBlank() && exitIp == deviceDirectIp) {
-                            // Transparent proxy did NOT mask the user's real IP -> reject!
-                            lastFailureStage = "Transparent Proxy Leak"
-                            lastFailureDetail = "Relay exposed real device IP ($deviceDirectIp) and was rejected."
-                            continue
-                        }
-
-                        return DetailedVerificationOutcome(
-                            result = EndToEndVerificationResult(
-                                relayType = candidateType,
-                                realTcpPingMs = realTcpPingMs,
-                                verifiedExitIp = exitIp
-                            )
-                        )
-                    } else {
-                        lastFailureStage = if (readTimedOut) "TLS Read Timeout" else "Empty Probe Response"
-                        lastFailureDetail = if (readTimedOut) {
-                            "TLS handshake succeeded, but relay stalled waiting for HTTPS response (${timeoutMs}ms)."
-                        } else {
-                            "Relay closed TLS stream before sending HTTP headers."
-                        }
-                    }
-                } catch (e: Exception) {
-                    lastFailureStage = "Tunnel Probe Exception"
-                    lastFailureDetail = "${e.javaClass.simpleName}: ${e.message ?: "Unexpected failure"}"
-                    try {
-                        rawSocket.close()
-                    } catch (_: Exception) {
                     }
                 }
+                if (tcpUnreachable) break@protocolLoop
             }
             return DetailedVerificationOutcome(
                 result = null,
@@ -892,6 +937,16 @@ class LocalTunnelGateway(
             protectSocket: ((Socket) -> Boolean)? = AetherVpnStateBus.protectSocketCallback,
             protectDatagram: ((DatagramSocket) -> Boolean)? = AetherVpnStateBus.protectDatagramCallback
         ): Socket? {
+            if (node.isSshProtocol) {
+                return SshTunnelManager.openDirectTcpIpSocket(
+                    node = node,
+                    targetHost = targetHost,
+                    targetPort = targetPort,
+                    timeoutMs = maxOf(timeoutMs, 5500),
+                    protectSocket = protectSocket
+                )
+            }
+
             val orderedTypes = if (node.isVerifiedWorking) {
                 listOf(node.relayType)
             } else {
@@ -922,7 +977,6 @@ class LocalTunnelGateway(
                     val output = socket.getOutputStream()
 
                     val handshakeOk = when (type) {
-                        RelayTunnelType.SSH_TUNNEL,
                         RelayTunnelType.WIREGUARD_TUNNEL,
                         RelayTunnelType.SOCKS5 -> performSocks5Connect(
                             input = input,
@@ -948,6 +1002,9 @@ class LocalTunnelGateway(
                             username = authUser,
                             password = authPass
                         )
+                        RelayTunnelType.SSH_TUNNEL,
+                        RelayTunnelType.SSH_TLS,
+                        RelayTunnelType.SSH_WS -> false
                     }
 
                     if (handshakeOk) {

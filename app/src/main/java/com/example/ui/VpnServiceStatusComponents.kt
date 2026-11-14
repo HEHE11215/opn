@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -263,7 +264,8 @@ fun VpnServiceStateIndicatorBar(
                 if (errorCount > 0) {
                     Surface(
                         shape = RoundedCornerShape(6.dp),
-                        color = MaterialTheme.colorScheme.errorContainer
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        modifier = Modifier.wrapContentWidth(unbounded = true)
                     ) {
                         Text(
                             text = "$errorCount alert${if (errorCount == 1) "" else "s"}",
@@ -408,7 +410,8 @@ fun VpnDiagnosticPanel(
                         )
                         Surface(
                             shape = RoundedCornerShape(6.dp),
-                            color = panelAccent.copy(alpha = 0.14f)
+                            color = panelAccent.copy(alpha = 0.14f),
+                            modifier = Modifier.wrapContentWidth(unbounded = true)
                         ) {
                             Text(
                                 text = if (errorLogsCount > 0) {

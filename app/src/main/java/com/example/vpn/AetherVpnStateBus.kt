@@ -44,6 +44,13 @@ object AetherVpnStateBus {
     private val _verifiedBackupPool = MutableStateFlow<List<VpnNode>>(emptyList())
     val verifiedBackupPool: StateFlow<List<VpnNode>> = _verifiedBackupPool.asStateFlow()
 
+    /**
+     * Stage-1 TCP-reachable candidate pool captured prior to Stage-2 TLS filtering,
+     * giving AetherVpnService immediate extra failover depth without waiting for another scan.
+     */
+    private val _rawCandidatePool = MutableStateFlow<List<VpnNode>>(emptyList())
+    val rawCandidatePool: StateFlow<List<VpnNode>> = _rawCandidatePool.asStateFlow()
+
     fun updateTelemetry(transform: (TunnelTelemetry) -> TunnelTelemetry) {
         _telemetry.update(transform)
     }
@@ -91,5 +98,9 @@ object AetherVpnStateBus {
 
     fun updateVerifiedBackupPool(nodes: List<VpnNode>) {
         _verifiedBackupPool.value = nodes
+    }
+
+    fun updateCandidateBackupPool(nodes: List<VpnNode>) {
+        _rawCandidatePool.value = nodes
     }
 }

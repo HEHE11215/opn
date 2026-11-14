@@ -73,7 +73,8 @@ class PublicNodeRepository(private val context: Context) {
             isDarkTheme = prefs[KEY_DARK_THEME] ?: false,
             wifiOnlyLatencyCheck = prefs[KEY_WIFI_ONLY_LATENCY] ?: false,
             autoConnectOnStartup = prefs[KEY_AUTO_CONNECT_ON_STARTUP] ?: false,
-            lastSelectedNode = prefs[KEY_LAST_SELECTED_NODE_JSON]?.let { decodeNodeJson(it) }
+            lastSelectedNode = prefs[KEY_LAST_SELECTED_NODE_JSON]?.let { decodeNodeJson(it) },
+            sshProviderFeedUrl = prefs[KEY_SSH_PROVIDER_FEED_URL] ?: ""
         )
     }
 
@@ -121,29 +122,35 @@ class PublicNodeRepository(private val context: Context) {
         context.vpnDataStore.edit { it[KEY_AUTO_CONNECT_ON_STARTUP] = enabled }
     }
 
+    suspend fun updateSshProviderFeedUrl(feedUrl: String) {
+        context.vpnDataStore.edit { it[KEY_SSH_PROVIDER_FEED_URL] = feedUrl.trim() }
+    }
+
     /**
      * Neutral bootstrap placeholder before the first live scan finishes.
      * Holds no fake IP or fake ping.
      */
     fun getInitialBootstrapNode(): VpnNode {
-        val base = VpnNode(
+        val cachedSsh = com.example.vpn.EphemeralAccountProvisioner.getValidVaultNodes(context).firstOrNull()
+        if (cachedSsh != null) return cachedSsh
+
+        return VpnNode(
             id = "auto_scanning",
             hostName = "",
             ipAddress = "",
             port = 443,
-            countryName = "Auto Fastest SSH/WG",
+            countryName = "Auto SSH / TLS / UDP",
             countryCode = "XX",
-            cityName = "Auto-provisioning 4-day SSH/WG…",
+            cityName = "Fetching live internet SSH & VPN servers…",
             flagEmoji = "⚡",
             region = VpnRegion.ALL,
             pingMs = -1,
             downloadSpeedMbps = 220.0,
-            operatorName = "Auto SSH/WG • 4-Day High-BW",
+            operatorName = "Live Internet Feed",
             protocol = VpnProtocol.WIREGUARD_CHACHA20,
-            relayType = RelayTunnelType.SSH_TUNNEL,
+            relayType = RelayTunnelType.SSH_TLS,
             isVerifiedWorking = false
         )
-        return com.example.vpn.EphemeralAccountProvisioner.attachCachedOrQuickAccount(context, base)
     }
 
     /**
@@ -152,6 +159,7 @@ class PublicNodeRepository(private val context: Context) {
      */
     suspend fun fetchLivePublicNodes(
         deviceDirectIp: String? = null,
+        sshFeedUrl: String = "",
         onWaveVerified: ((List<VpnNode>) -> Unit)? = null
     ): Result<List<VpnNode>> = withContext(Dispatchers.IO) {
         try {
@@ -164,13 +172,26 @@ class PublicNodeRepository(private val context: Context) {
                     AetherVpnStateBus.updateTelemetry { it.copy(deviceDirectIp = ip) }
                 }
 
+            val sshHarvestDeferred = async(Dispatchers.IO) {
+                runCatching {
+                    com.example.vpn.EphemeralAccountProvisioner.fetchLiveSshAccountsFromInternet(
+                        context = context,
+                        customFeedUrl = sshFeedUrl
+                    )
+                }.getOrNull()
+            }
+
             val rawCandidates = fetchAllPublicFeedsInParallel()
-            if (rawCandidates.isEmpty()) {
+            val sshHarvest = sshHarvestDeferred.await()
+            val harvestedSshNodes = sshHarvest?.readyNodes.orEmpty()
+
+            if (rawCandidates.isEmpty() && harvestedSshNodes.isEmpty()) {
                 return@withContext Result.failure(IllegalStateException("Unable to reach live server endpoints"))
             }
 
-            // Pick diverse candidates across all countries, capped for ultra-light CPU/battery
-            val diverseCandidates = pickDiverseCountryCandidates(rawCandidates, maxTotal = 160)
+            // Pick diverse candidates across all countries, prioritizing harvested SSH accounts first
+            val diverseCandidates = (harvestedSshNodes + pickDiverseCountryCandidates(rawCandidates, maxTotal = 160))
+                .distinctBy { "${it.ipAddress}:${it.port}:${it.username}" }
 
             // Stage 1: Lightweight parallel TCP handshake duration filter
             val tcpSemaphore = Semaphore(16)
@@ -193,12 +214,13 @@ class PublicNodeRepository(private val context: Context) {
             if (allReachable.isEmpty()) {
                 return@withContext Result.success(emptyList())
             }
+            AetherVpnStateBus.updateCandidateBackupPool(allReachable)
 
-            // Interleave up to 5 fastest candidates PER country so Singapore never crowds out US/EU/JP
-            val stage2Candidates = selectBalancedPerCountryForTls(allReachable, perCountryCap = 5, maxTotal = 85)
+            // Interleave up to 6 fastest candidates PER country so Singapore never crowds out US/EU/JP
+            val stage2Candidates = selectBalancedPerCountryForTls(allReachable, perCountryCap = 6, maxTotal = 96)
 
-            // Stage 2: Strict End-to-End HTTPS TLS + Exit-IP verification against api.ipify.org (4500ms timeout)
-            val tlsSemaphore = Semaphore(12)
+            // Stage 2: Strict End-to-End HTTPS TLS + multi-endpoint Exit-IP verification (3000ms timeout)
+            val tlsSemaphore = Semaphore(16)
             val verifiedCollector = Collections.synchronizedList(mutableListOf<VpnNode>())
 
             coroutineScope {
@@ -208,7 +230,7 @@ class PublicNodeRepository(private val context: Context) {
                             val res = LocalTunnelGateway.verifyNodeEndToEndTls(
                                 node = candidate,
                                 deviceDirectIp = resolvedDirectIp,
-                                timeoutMs = 4500,
+                                timeoutMs = 3000,
                                 protectSocket = protectSocket,
                                 protectDatagram = protectDatagram
                             )
@@ -228,7 +250,10 @@ class PublicNodeRepository(private val context: Context) {
                                 val (allVerifiedSnapshot, dedupSnapshot) = synchronized(verifiedCollector) {
                                     verifiedCollector.add(enriched)
                                     val fullCopy = verifiedCollector
-                                        .sortedBy { if (it.pingMs > 0) it.pingMs else Int.MAX_VALUE }
+                                        .sortedWith(
+                                            compareByDescending<VpnNode> { it.isSshProtocol }
+                                                .thenBy { if (it.pingMs > 0) it.pingMs else Int.MAX_VALUE }
+                                        )
                                     val dedupCopy = deduplicateFastestPerCountry(fullCopy)
                                     fullCopy to dedupCopy
                                 }
@@ -242,7 +267,10 @@ class PublicNodeRepository(private val context: Context) {
             }
 
             val fullVerified = synchronized(verifiedCollector) {
-                verifiedCollector.sortedBy { if (it.pingMs > 0) it.pingMs else Int.MAX_VALUE }
+                verifiedCollector.sortedWith(
+                    compareByDescending<VpnNode> { it.isSshProtocol }
+                        .thenBy { if (it.pingMs > 0) it.pingMs else Int.MAX_VALUE }
+                )
             }
             val finalVerified = deduplicateFastestPerCountry(fullVerified)
             AetherVpnStateBus.updateVerifiedBackupPool(fullVerified)
@@ -620,6 +648,7 @@ class PublicNodeRepository(private val context: Context) {
         private val KEY_WIFI_ONLY_LATENCY = booleanPreferencesKey("wifi_only_latency_check")
         private val KEY_AUTO_CONNECT_ON_STARTUP = booleanPreferencesKey("auto_connect_on_startup")
         private val KEY_LAST_SELECTED_NODE_JSON = stringPreferencesKey("last_selected_node_json")
+        private val KEY_SSH_PROVIDER_FEED_URL = stringPreferencesKey("ssh_provider_feed_url")
 
         fun encodeNodeJson(node: VpnNode): String {
             return JSONObject().apply {
@@ -645,6 +674,11 @@ class PublicNodeRepository(private val context: Context) {
                 put("accountExpiresAtEpochMs", node.accountExpiresAtEpochMs)
                 put("wireguardPublicKey", node.wireguardPublicKey)
                 put("provisionedAccountId", node.provisionedAccountId)
+                put("tlsPort", node.tlsPort)
+                put("udpPort", node.udpPort)
+                put("sniHost", node.sniHost)
+                put("sshPrivateKey", node.sshPrivateKey)
+                put("providerName", node.providerName)
             }.toString()
         }
 
@@ -675,7 +709,7 @@ class PublicNodeRepository(private val context: Context) {
                     region = mapCountryCodeToRegion(cc),
                     pingMs = obj.optInt("pingMs", -1),
                     downloadSpeedMbps = obj.optDouble("downloadSpeedMbps", 180.0),
-                    operatorName = obj.optString("operatorName", "Auto SSH/WG • 4-Day High-BW"),
+                    operatorName = obj.optString("operatorName", "Live SSH/TLS Server"),
                     protocol = protocol,
                     relayType = relayType,
                     username = obj.optString("username", ""),
@@ -686,7 +720,12 @@ class PublicNodeRepository(private val context: Context) {
                     isCustomNode = obj.optBoolean("isCustomNode", false),
                     accountExpiresAtEpochMs = obj.optLong("accountExpiresAtEpochMs", 0L),
                     wireguardPublicKey = obj.optString("wireguardPublicKey", ""),
-                    provisionedAccountId = obj.optString("provisionedAccountId", "")
+                    provisionedAccountId = obj.optString("provisionedAccountId", ""),
+                    tlsPort = obj.optInt("tlsPort", 443),
+                    udpPort = obj.optInt("udpPort", 7300),
+                    sniHost = obj.optString("sniHost", ""),
+                    sshPrivateKey = obj.optString("sshPrivateKey", ""),
+                    providerName = obj.optString("providerName", "")
                 )
             }.getOrNull()
         }

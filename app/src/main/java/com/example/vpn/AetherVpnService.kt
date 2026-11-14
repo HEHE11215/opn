@@ -210,11 +210,11 @@ class AetherVpnService : VpnService() {
 
         tunnelJob = serviceScope.launch {
             try {
-                // Automatically fetch/provision a free 4-day (3-to-5-day) SSH/WireGuard high-bandwidth account
+                // Use active SSH account seamlessly until expired; if expired, auto-fetch a replacement over internet
                 val provisionedTarget = EphemeralAccountProvisioner.ensureFreshAccountForConnection(
                     context = this@AetherVpnService,
                     node = requestedNode,
-                    forceRenew = !requestedNode.hasValidEphemeralAccount()
+                    forceRenew = requestedNode.isSshProtocol && requestedNode.isAccountExpired()
                 )
 
                 val knownDirectIp = AetherVpnStateBus.telemetry.value.deviceDirectIp
@@ -234,7 +234,11 @@ class AetherVpnService : VpnService() {
                         isForegroundServiceActive = isForegroundActive,
                         bytesDownloaded = prev.bytesDownloaded,
                         bytesUploaded = prev.bytesUploaded,
-                        handshakeSummary = "Provisioning 4-day SSH/WG & connecting ${provisionedTarget.flagEmoji} ${provisionedTarget.countryName}…",
+                        handshakeSummary = if (provisionedTarget.isSshProtocol) {
+                            "Connecting ${provisionedTarget.relayType.badgeLabel} (${provisionedTarget.username})…"
+                        } else {
+                            "Connecting ${provisionedTarget.flagEmoji} ${provisionedTarget.countryName}…"
+                        },
                         lastFailureStage = prev.lastFailureStage,
                         lastFailureReason = prev.lastFailureReason,
                         lastFailedServerLabel = prev.lastFailedServerLabel,
@@ -246,8 +250,16 @@ class AetherVpnService : VpnService() {
                 AetherVpnStateBus.recordDiagnostic(
                     phase = "Connecting",
                     serverLabel = formatNodeLabel(provisionedTarget),
-                    summary = "SSH/WG Account Ready (${provisionedTarget.username.ifEmpty { "auto" }})",
-                    detail = "Testing ${provisionedTarget.relayType.badgeLabel} high-bandwidth tunnel via protected socket",
+                    summary = if (provisionedTarget.isSshProtocol) {
+                        "Opening ${provisionedTarget.relayType.badgeLabel} Tunnel (${provisionedTarget.username})"
+                    } else {
+                        "Opening ${provisionedTarget.relayType.badgeLabel} Tunnel"
+                    },
+                    detail = if (provisionedTarget.isSshProtocol) {
+                        "SSH TLS ${provisionedTarget.tlsPort} • UDP ${provisionedTarget.udpPort} • ${provisionedTarget.remainingValidityLabel()}"
+                    } else {
+                        "Testing ${provisionedTarget.relayType.badgeLabel} via protected socket"
+                    },
                     severity = VpnDiagnosticSeverity.INFO
                 )
 
@@ -284,12 +296,10 @@ class AetherVpnService : VpnService() {
                     return@launch
                 }
 
-                // Ensure the winning node carries its active 4-day SSH/WireGuard high-bandwidth account
-                val activeNode = EphemeralAccountProvisioner.ensureFreshAccountForConnection(
-                    context = this@AetherVpnService,
-                    node = verifiedWinner,
-                    forceRenew = false
-                )
+                val activeNode = verifiedWinner
+                if (activeNode.isSshProtocol && activeNode.hasValidEphemeralAccount()) {
+                    EphemeralAccountProvisioner.saveAccountToVault(this@AetherVpnService, activeNode)
+                }
 
                 val verifiedBackups = (AetherVpnStateBus.verifiedBackupPool.value + AetherVpnStateBus.nodePool.value)
                     .filter { it.isVerifiedWorking && it.ipAddress.isNotBlank() }
@@ -488,18 +498,23 @@ class AetherVpnService : VpnService() {
     /**
      * Parallel hedged relay verification:
      * Tests candidates in parallel races (`raceVerifyFirst`) so connecting or switching servers
-     * resolves in ~0.5–2.5 seconds rather than blocking sequentially on dead/stuck proxies.
-     * Captures exact per-stage failure details if a requested server or country fails verification.
+     * resolves smoothly (~0.4–2.5s) rather than failing on a single congested/rate-limited relay.
+     * Captures exact per-stage failure details if every candidate fails.
      */
     private suspend fun verifyTargetOrFailoverRelayParallel(
         requestedNode: VpnNode,
         isManualSelection: Boolean,
         deviceDirectIp: String?
     ): ParallelRaceResult {
-        val fullPool = (AetherVpnStateBus.verifiedBackupPool.value + AetherVpnStateBus.nodePool.value)
+        var fullPool = (
+            AetherVpnStateBus.verifiedBackupPool.value +
+                AetherVpnStateBus.nodePool.value +
+                AetherVpnStateBus.rawCandidatePool.value
+            )
             .filter { it.ipAddress.isNotBlank() && it.port in 1..65535 }
             .distinctBy { "${it.ipAddress}:${it.port}" }
 
+        // Only custom user-added servers skip global failover so exact server diagnostics are preserved.
         if (requestedNode.isCustomNode) {
             val outcome = LocalTunnelGateway.verifyNodeEndToEndTlsDetailed(
                 node = requestedNode,
@@ -523,8 +538,28 @@ class AetherVpnService : VpnService() {
             )
         }
 
+        // If user tapped Connect right after launch before public pools populated, pull live nodes inline
+        if (fullPool.isEmpty() && requestedNode.ipAddress.isBlank()) {
+            AetherVpnStateBus.updateTelemetry {
+                it.copy(handshakeSummary = "Fetching live relays before handshake…")
+            }
+            PublicNodeRepository(this@AetherVpnService).fetchLivePublicNodes(
+                deviceDirectIp = deviceDirectIp
+            )
+            fullPool = (
+                AetherVpnStateBus.verifiedBackupPool.value +
+                    AetherVpnStateBus.nodePool.value +
+                    AetherVpnStateBus.rawCandidatePool.value
+                )
+                .filter { it.ipAddress.isNotBlank() && it.port in 1..65535 }
+                .distinctBy { "${it.ipAddress}:${it.port}" }
+        }
+
         val tier1Candidates = mutableListOf<VpnNode>()
-        if (requestedNode.ipAddress.isNotBlank() && requestedNode.port in 1..65535) {
+        val requestedHasUsableEndpoint = requestedNode.ipAddress.isNotBlank() &&
+            requestedNode.port in 1..65535 &&
+            (!requestedNode.isSshProtocol || requestedNode.hasValidEphemeralAccount())
+        if (requestedHasUsableEndpoint) {
             tier1Candidates.add(requestedNode)
         }
 
@@ -532,18 +567,40 @@ class AetherVpnService : VpnService() {
             fullPool.filter {
                 it.countryCode.equals(requestedNode.countryCode, ignoreCase = true) &&
                     (it.ipAddress != requestedNode.ipAddress || it.port != requestedNode.port)
-            }.sortedBy { if (it.pingMs > 0) it.pingMs else Int.MAX_VALUE }
-                .take(4)
+            }.sortedWith(
+                compareByDescending<VpnNode> { it.isVerifiedWorking }
+                    .thenBy { if (it.pingMs > 0) it.pingMs else Int.MAX_VALUE }
+            )
+                .take(5)
+                .forEach { tier1Candidates.add(it) }
+        } else {
+            // Auto-Fastest: race requested node alongside top 7 fastest verified/candidate relays immediately!
+            fullPool.filter {
+                it.ipAddress != requestedNode.ipAddress || it.port != requestedNode.port
+            }.sortedWith(
+                compareByDescending<VpnNode> { it.isVerifiedWorking }
+                    .thenBy { if (it.pingMs > 0) it.pingMs else Int.MAX_VALUE }
+            )
+                .take(7)
                 .forEach { tier1Candidates.add(it) }
         }
 
         var tier1FailureStage: String? = null
         var tier1FailureDetail: String? = null
         if (tier1Candidates.isNotEmpty()) {
+            AetherVpnStateBus.updateTelemetry {
+                it.copy(
+                    handshakeSummary = if (isManualSelection) {
+                        "Verifying ${requestedNode.flagEmoji} ${requestedNode.countryName} (${tier1Candidates.size} relays)…"
+                    } else {
+                        "Racing ${tier1Candidates.size} fastest relays…"
+                    }
+                )
+            }
             val tier1Race = raceVerifyFirst(
                 candidates = tier1Candidates,
                 deviceDirectIp = deviceDirectIp,
-                timeoutMs = 4500
+                timeoutMs = 3200
             )
             if (tier1Race.winner != null) return tier1Race
             tier1FailureStage = tier1Race.failureStage
@@ -557,11 +614,17 @@ class AetherVpnService : VpnService() {
             )
         }
 
-        // Smooth failover: if requested server/country is stuck or offline, immediately race global backups!
+        // Smooth failover: immediately race top 10 remaining global relays across verified + TCP candidate pools
         val globalCandidates = fullPool
-            .filter { cand -> tier1Candidates.none { it.ipAddress == cand.ipAddress && it.port == cand.port } }
-            .sortedBy { if (it.pingMs > 0) it.pingMs else Int.MAX_VALUE }
-            .take(6)
+            .filter { cand ->
+                (!cand.isSshProtocol || cand.hasValidEphemeralAccount()) &&
+                    tier1Candidates.none { it.ipAddress == cand.ipAddress && it.port == cand.port }
+            }
+            .sortedWith(
+                compareByDescending<VpnNode> { it.isVerifiedWorking }
+                    .thenBy { if (it.pingMs > 0) it.pingMs else Int.MAX_VALUE }
+            )
+            .take(10)
 
         if (globalCandidates.isEmpty()) {
             return ParallelRaceResult(
@@ -570,10 +633,13 @@ class AetherVpnService : VpnService() {
                 failureDetail = tier1FailureDetail ?: "Server pool is empty; tap Refresh on the Servers tab."
             )
         }
+        AetherVpnStateBus.updateTelemetry {
+            it.copy(handshakeSummary = "Failover: Racing ${globalCandidates.size} global relays…")
+        }
         val globalRace = raceVerifyFirst(
             candidates = globalCandidates,
             deviceDirectIp = deviceDirectIp,
-            timeoutMs = 4500
+            timeoutMs = 3200
         )
         return if (globalRace.winner != null) {
             globalRace
@@ -695,8 +761,8 @@ class AetherVpnService : VpnService() {
                 }
             }
 
-            // Every 10 seconds measure genuine TCP handshake latency on the connected server (never auto-switches servers!)
-            if (elapsedSec % 10L == 0L) {
+            // Every 5 seconds measure genuine TCP handshake latency on the connected server (never auto-switches servers!)
+            if (elapsedSec % 5L == 0L) {
                 val realPing = LocalTunnelGateway.measureTcpHandshakeDurationMs(
                     ipOrHost = liveCurrentNode.ipAddress,
                     port = liveCurrentNode.port,
@@ -725,6 +791,21 @@ class AetherVpnService : VpnService() {
                             severity = VpnDiagnosticSeverity.WARNING
                         )
                     }
+                }
+            }
+
+            // If a temporary 1-day/3-day SSH account hits expiry during an active session, auto-renew seamlessly!
+            if (liveCurrentNode.isSshProtocol && liveCurrentNode.isAccountExpired(now)) {
+                val renewed = EphemeralAccountProvisioner.ensureFreshAccountForConnection(
+                    context = this@AetherVpnService,
+                    node = liveCurrentNode,
+                    forceRenew = true
+                )
+                if (!renewed.isAccountExpired(now) &&
+                    (renewed.username != liveCurrentNode.username || renewed.ipAddress != liveCurrentNode.ipAddress)
+                ) {
+                    liveCurrentNode = renewed
+                    gateway.switchPrimaryNode(renewed, emptyList())
                 }
             }
 
@@ -1004,6 +1085,12 @@ class AetherVpnService : VpnService() {
                 .putString(EXTRA_NODE_EXIT_IP, node.verifiedExitIp)
                 .putBoolean(EXTRA_NODE_VERIFIED, node.isVerifiedWorking)
                 .putBoolean(EXTRA_NODE_IS_CUSTOM, node.isCustomNode)
+                .putLong(EXTRA_NODE_EXPIRES_AT, node.accountExpiresAtEpochMs)
+                .putInt(EXTRA_NODE_TLS_PORT, node.tlsPort)
+                .putInt(EXTRA_NODE_UDP_PORT, node.udpPort)
+                .putString(EXTRA_NODE_SNI_HOST, node.sniHost)
+                .putString(EXTRA_NODE_SSH_KEY, node.sshPrivateKey)
+                .putString(EXTRA_NODE_PROVIDER_NAME, node.providerName)
                 .putBoolean(EXTRA_IS_MANUAL_SELECTION, isManual)
                 .putString(EXTRA_DNS_SERVER, dnsServer)
                 .apply()
@@ -1045,7 +1132,7 @@ class AetherVpnService : VpnService() {
             flagEmoji = intent.getStringExtra(EXTRA_NODE_FLAG) ?: "🌐",
             region = PublicNodeRepository.mapCountryCodeToRegion(code),
             pingMs = intent.getIntExtra(EXTRA_NODE_PING, -1),
-            downloadSpeedMbps = 100.0,
+            downloadSpeedMbps = 220.0,
             operatorName = intent.getStringExtra(EXTRA_NODE_OPERATOR) ?: "Verified Relay",
             protocol = protocol,
             relayType = relayType,
@@ -1053,7 +1140,13 @@ class AetherVpnService : VpnService() {
             password = intent.getStringExtra(EXTRA_NODE_PASSWORD).orEmpty(),
             verifiedExitIp = intent.getStringExtra(EXTRA_NODE_EXIT_IP).orEmpty(),
             isVerifiedWorking = intent.getBooleanExtra(EXTRA_NODE_VERIFIED, false),
-            isCustomNode = intent.getBooleanExtra(EXTRA_NODE_IS_CUSTOM, false)
+            isCustomNode = intent.getBooleanExtra(EXTRA_NODE_IS_CUSTOM, false),
+            accountExpiresAtEpochMs = intent.getLongExtra(EXTRA_NODE_EXPIRES_AT, 0L),
+            tlsPort = intent.getIntExtra(EXTRA_NODE_TLS_PORT, 443),
+            udpPort = intent.getIntExtra(EXTRA_NODE_UDP_PORT, 7300),
+            sniHost = intent.getStringExtra(EXTRA_NODE_SNI_HOST).orEmpty(),
+            sshPrivateKey = intent.getStringExtra(EXTRA_NODE_SSH_KEY).orEmpty(),
+            providerName = intent.getStringExtra(EXTRA_NODE_PROVIDER_NAME).orEmpty()
         )
     }
 
@@ -1092,6 +1185,12 @@ class AetherVpnService : VpnService() {
         const val EXTRA_NODE_EXIT_IP = "extra_node_exit_ip"
         const val EXTRA_NODE_VERIFIED = "extra_node_verified"
         const val EXTRA_NODE_IS_CUSTOM = "extra_node_is_custom"
+        const val EXTRA_NODE_EXPIRES_AT = "extra_node_expires_at"
+        const val EXTRA_NODE_TLS_PORT = "extra_node_tls_port"
+        const val EXTRA_NODE_UDP_PORT = "extra_node_udp_port"
+        const val EXTRA_NODE_SNI_HOST = "extra_node_sni_host"
+        const val EXTRA_NODE_SSH_KEY = "extra_node_ssh_key"
+        const val EXTRA_NODE_PROVIDER_NAME = "extra_node_provider_name"
         const val EXTRA_IS_MANUAL_SELECTION = "extra_is_manual_selection"
         const val EXTRA_DNS_SERVER = "extra_dns_server"
 
@@ -1130,7 +1229,7 @@ class AetherVpnService : VpnService() {
                     flagEmoji = prefs.getString(EXTRA_NODE_FLAG, "🌐") ?: "🌐",
                     region = PublicNodeRepository.mapCountryCodeToRegion(cc),
                     pingMs = prefs.getInt(EXTRA_NODE_PING, -1),
-                    downloadSpeedMbps = 100.0,
+                    downloadSpeedMbps = 220.0,
                     operatorName = prefs.getString(EXTRA_NODE_OPERATOR, "Verified Relay") ?: "Verified Relay",
                     protocol = protocol,
                     relayType = relayType,
@@ -1138,7 +1237,13 @@ class AetherVpnService : VpnService() {
                     password = prefs.getString(EXTRA_NODE_PASSWORD, "").orEmpty(),
                     verifiedExitIp = prefs.getString(EXTRA_NODE_EXIT_IP, "").orEmpty(),
                     isVerifiedWorking = prefs.getBoolean(EXTRA_NODE_VERIFIED, false),
-                    isCustomNode = prefs.getBoolean(EXTRA_NODE_IS_CUSTOM, false)
+                    isCustomNode = prefs.getBoolean(EXTRA_NODE_IS_CUSTOM, false),
+                    accountExpiresAtEpochMs = prefs.getLong(EXTRA_NODE_EXPIRES_AT, 0L),
+                    tlsPort = prefs.getInt(EXTRA_NODE_TLS_PORT, 443),
+                    udpPort = prefs.getInt(EXTRA_NODE_UDP_PORT, 7300),
+                    sniHost = prefs.getString(EXTRA_NODE_SNI_HOST, "").orEmpty(),
+                    sshPrivateKey = prefs.getString(EXTRA_NODE_SSH_KEY, "").orEmpty(),
+                    providerName = prefs.getString(EXTRA_NODE_PROVIDER_NAME, "").orEmpty()
                 )
                 val isManual = prefs.getBoolean(EXTRA_IS_MANUAL_SELECTION, false)
                 val dnsServer = prefs.getString(EXTRA_DNS_SERVER, "1.1.1.1") ?: "1.1.1.1"

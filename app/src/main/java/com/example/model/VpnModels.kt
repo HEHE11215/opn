@@ -14,14 +14,16 @@ enum class VpnRegion(val displayName: String) {
 
 /**
  * Underlying wire protocol used by [com.example.vpn.LocalTunnelGateway] and
- * [com.example.vpn.TunPacketEngine] to tunnel traffic through the remote SSH / WireGuard exit server.
+ * [com.example.vpn.SshTunnelManager] to tunnel traffic through the remote SSH / TLS / UDP exit server.
  */
 enum class RelayTunnelType(val badgeLabel: String) {
-    SSH_TUNNEL("SSH-2 High-BW"),
+    SSH_TUNNEL("SSH-2"),
+    SSH_TLS("SSH TLS 443"),
+    SSH_WS("SSH WS"),
     WIREGUARD_TUNNEL("WireGuard ⚡"),
-    SOCKS5("SSH Dynamic"),
-    SOCKS4("SSH Stream"),
-    HTTP_CONNECT("SSH TLS 443")
+    SOCKS5("SOCKS5"),
+    SOCKS4("SOCKS4"),
+    HTTP_CONNECT("HTTPS")
 }
 
 /**
@@ -34,21 +36,21 @@ enum class VpnProtocol(
     val defaultPort: Int
 ) {
     WIREGUARD_CHACHA20(
-        shortName = "SSH + WireGuard",
-        fullName = "Auto-Provisioned 4-Day SSH & WireGuard Tunnel",
-        cipherDescription = "256KB High-Bandwidth Stream • Auto 4-Day Account • TUN0",
+        shortName = "SSH + TLS + UDP",
+        fullName = "High-Bandwidth SSH-2 / TLS / UDP Tunnel",
+        cipherDescription = "SSH-2 Direct-TCPIP • TLS 443 + UDPGW 7300 • TUN0",
         defaultPort = 443
     ),
     OPENVPN_UDP_AES256(
-        shortName = "SSH Dynamic",
-        fullName = "SSH-2 Dynamic Port Forwarding",
-        cipherDescription = "Full-Bandwidth SSH Multiplexed Stream",
-        defaultPort = 1080
+        shortName = "SSH Port 22",
+        fullName = "Direct OpenSSH / Dropbear Tunnel",
+        cipherDescription = "Full-Bandwidth SSH-2 Encrypted Stream",
+        defaultPort = 22
     ),
     OPENVPN_TCP_TLS(
         shortName = "SSH TLS 443",
-        fullName = "SSH over TLS Port 443",
-        cipherDescription = "High-Bandwidth TLS 443 Passthrough",
+        fullName = "SSH over TLS Port 443 (Stunnel)",
+        cipherDescription = "TLS 1.3 + SSH-2 SNI High-Bandwidth Tunnel",
         defaultPort = 443
     )
 }
@@ -64,7 +66,7 @@ enum class NodeSortOption(val label: String) {
 }
 
 /**
- * Represents a high-bandwidth VPN server node with automatic 3-to-5-day ephemeral SSH/WireGuard account credentials.
+ * Represents a live VPN / SSH / TLS / UDP server node.
  */
 data class VpnNode(
     val id: String,
@@ -89,7 +91,12 @@ data class VpnNode(
     val isCustomNode: Boolean = false,
     val accountExpiresAtEpochMs: Long = 0L,
     val wireguardPublicKey: String = "",
-    val provisionedAccountId: String = ""
+    val provisionedAccountId: String = "",
+    val tlsPort: Int = 443,
+    val udpPort: Int = 7300,
+    val sniHost: String = "",
+    val sshPrivateKey: String = "",
+    val providerName: String = ""
 ) {
     val signalBars: Int
         get() = when {
@@ -100,20 +107,35 @@ data class VpnNode(
             else -> 1
         }
 
+    val isSshProtocol: Boolean
+        get() = relayType == RelayTunnelType.SSH_TUNNEL ||
+            relayType == RelayTunnelType.SSH_TLS ||
+            relayType == RelayTunnelType.SSH_WS
+
     fun hasValidEphemeralAccount(nowEpochMs: Long = System.currentTimeMillis()): Boolean {
-        return username.isNotBlank() && accountExpiresAtEpochMs > nowEpochMs
+        val hasCreds = username.isNotBlank() && (password.isNotBlank() || sshPrivateKey.isNotBlank())
+        if (!hasCreds) return false
+        return accountExpiresAtEpochMs <= 0L || accountExpiresAtEpochMs > (nowEpochMs + 60_000L)
+    }
+
+    fun isAccountExpired(nowEpochMs: Long = System.currentTimeMillis()): Boolean {
+        return accountExpiresAtEpochMs > 0L && accountExpiresAtEpochMs <= (nowEpochMs + 60_000L)
     }
 
     fun remainingValidityLabel(nowEpochMs: Long = System.currentTimeMillis()): String {
+        if (accountExpiresAtEpochMs <= 0L) {
+            return if (isSshProtocol && username.isNotBlank()) "Live SSH" else relayType.badgeLabel
+        }
         val remainingMs = accountExpiresAtEpochMs - nowEpochMs
-        if (remainingMs <= 0L) return "Auto-Fetch 4d SSH/WG"
-        val totalHours = (remainingMs / (1000L * 60L * 60L)).coerceAtLeast(1L)
+        if (remainingMs <= 0L) return "Expired • Renewing"
+        val totalMinutes = (remainingMs / (1000L * 60L)).coerceAtLeast(1L)
+        val totalHours = totalMinutes / 60L
         val days = totalHours / 24L
         val hours = totalHours % 24L
-        return if (days > 0L) {
-            "${days}d ${hours}h Free SSH/WG"
-        } else {
-            "${hours}h Free SSH/WG"
+        return when {
+            days > 0L -> "${days}d ${hours}h SSH"
+            totalHours > 0L -> "${totalHours}h SSH"
+            else -> "${totalMinutes}m SSH"
         }
     }
 }
@@ -207,5 +229,6 @@ data class VpnPreferences(
     val isDarkTheme: Boolean = false,
     val wifiOnlyLatencyCheck: Boolean = false,
     val autoConnectOnStartup: Boolean = false,
-    val lastSelectedNode: VpnNode? = null
+    val lastSelectedNode: VpnNode? = null,
+    val sshProviderFeedUrl: String = ""
 )

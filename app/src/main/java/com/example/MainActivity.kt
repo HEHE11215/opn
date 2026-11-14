@@ -1,6 +1,7 @@
 package com.example
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.StatusBarManager
 import android.content.ComponentName
 import android.content.Intent
@@ -8,6 +9,8 @@ import android.graphics.drawable.Icon as AndroidDrawableIcon
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -27,6 +30,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -49,6 +53,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.LightMode
@@ -60,8 +66,10 @@ import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -98,6 +106,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.model.RelayTunnelType
 import com.example.model.TunnelConnectionStatus
@@ -118,9 +127,11 @@ import com.example.ui.theme.AmberHandshaking
 import com.example.ui.theme.EmeraldConnected
 import com.example.ui.theme.RoseAlert
 import com.example.vpn.AVpnQuickTileService
+import com.example.vpn.EphemeralAccountProvisioner
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 /**
  * MainActivity for **A VPN** — Developed by Ashir ♥️.
@@ -469,7 +480,8 @@ fun AVpnRootApp(
                                 onToggleWifiOnlyLatency = viewModel::setWifiOnlyLatencyCheck,
                                 onToggleAutoConnectOnStartup = viewModel::setAutoConnectOnStartup,
                                 onRequestAddQuickTile = requestAddQuickSettingsTile,
-                                onRenewSshAccount = viewModel::renewEphemeralSshAccountNow
+                                onRenewSshAccount = viewModel::renewEphemeralSshAccountNow,
+                                onProbeSelectedLatency = { viewModel.probeSelectedNodeLatencyNow() }
                             )
                         }
 
@@ -537,7 +549,11 @@ fun AVpnRootApp(
         if (uiState.showAddCustomNodeModal) {
             AddCustomNodeDialog(
                 onDismiss = { viewModel.setShowAddCustomNodeModal(false) },
-                onConfirmAdd = { country, code, city, ip, port, operator, relayType, username, password ->
+                onOpenFreeSshFetcher = {
+                    viewModel.setShowAddCustomNodeModal(false)
+                    viewModel.setShowFreeSshFetcherModal(true)
+                },
+                onConfirmAdd = { country, code, city, ip, port, operator, relayType, username, password, sshPrivateKey, sniHost, udpPort ->
                     viewModel.addCustomCommunityNode(
                         countryName = country,
                         countryCode = code,
@@ -548,7 +564,30 @@ fun AVpnRootApp(
                         protocol = uiState.preferences.preferredProtocol,
                         relayType = relayType,
                         username = username,
-                        password = password
+                        password = password,
+                        sshPrivateKey = sshPrivateKey,
+                        sniHost = sniHost,
+                        udpPort = udpPort
+                    )
+                }
+            )
+        }
+
+        // Clean Material 3 Live Free SSH / TLS / UDP Internet Fetcher & Auto-Grabber Dialog
+        if (uiState.showFreeSshFetcherModal) {
+            FreeSshAutoFetchDialog(
+                initialFeedUrl = uiState.preferences.sshProviderFeedUrl,
+                isFetching = uiState.isFetchingSshAccounts,
+                captchaGatedProviders = uiState.sshCaptchaGatedProviders,
+                onDismiss = { viewModel.setShowFreeSshFetcherModal(false) },
+                onAutoFetchFeed = { url -> viewModel.fetchFreeSshFromInternetNow(url) },
+                onImportCapturedPayload = { rawPayload, providerName ->
+                    viewModel.importFreeSshAccountPayload(
+                        rawPayload = rawPayload,
+                        providerName = providerName,
+                        connectNow = { verifiedNode ->
+                            initiateVpnConnect(verifiedNode, true)
+                        }
                     )
                 }
             )
@@ -911,11 +950,12 @@ private fun MaterialEventPopupDialog(
 }
 
 /**
- * Clean Material 3 Add Custom Server Dialog.
+ * Clean Material 3 Add Custom SSH / TLS / WS / Proxy Server Dialog.
  */
 @Composable
 private fun AddCustomNodeDialog(
     onDismiss: () -> Unit,
+    onOpenFreeSshFetcher: () -> Unit,
     onConfirmAdd: (
         country: String,
         code: String,
@@ -925,18 +965,26 @@ private fun AddCustomNodeDialog(
         operator: String,
         relayType: RelayTunnelType,
         username: String,
-        password: String
+        password: String,
+        sshPrivateKey: String,
+        sniHost: String,
+        udpPort: Int
     ) -> Unit
 ) {
     var countryName by remember { mutableStateOf("") }
     var countryCode by remember { mutableStateOf("") }
     var cityName by remember { mutableStateOf("") }
     var ipAddress by remember { mutableStateOf("") }
-    var portText by remember { mutableStateOf("1080") }
+    var portText by remember { mutableStateOf("443") }
+    var udpPortText by remember { mutableStateOf("7300") }
+    var sniHost by remember { mutableStateOf("") }
     var operatorName by remember { mutableStateOf("") }
-    var selectedRelayType by remember { mutableStateOf(RelayTunnelType.SSH_TUNNEL) }
+    var selectedRelayType by remember { mutableStateOf(RelayTunnelType.SSH_TLS) }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var sshPrivateKey by remember { mutableStateOf("") }
+
+    BackHandler(onBack = onDismiss)
 
     Box(
         modifier = Modifier
@@ -954,7 +1002,7 @@ private fun AddCustomNodeDialog(
             cornerRadius = 20.dp,
             modifier = Modifier
                 .fillMaxWidth()
-                .widthIn(max = 390.dp)
+                .widthIn(max = 410.dp)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -968,32 +1016,57 @@ private fun AddCustomNodeDialog(
                     .padding(horizontal = 20.dp, vertical = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text(
-                    text = "Add Custom SSH / WireGuard Server",
-                    style = MaterialTheme.typography.titleLarge.copy(
-                        fontWeight = FontWeight.Bold
-                    ),
-                    color = MaterialTheme.colorScheme.onSurface
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Add SSH / TLS / Proxy Server",
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Surface(
+                        onClick = onOpenFreeSshFetcher,
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier.testTag("switch_to_free_ssh_fetcher_button")
+                    ) {
+                        Text(
+                            text = "Get Free SSH",
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontWeight = FontWeight.Bold
+                            ),
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        )
+                    }
+                }
 
-                // Protocol Type Switcher: SSH-2 High-BW vs WireGuard vs SSH Dynamic vs SSH TLS 443
+                // Protocol Type Switcher: SSH TLS (443), SSH-2 (22), SSH WS (80), SOCKS5 (1080)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     listOf(
+                        RelayTunnelType.SSH_TLS,
                         RelayTunnelType.SSH_TUNNEL,
-                        RelayTunnelType.WIREGUARD_TUNNEL,
-                        RelayTunnelType.HTTP_CONNECT
+                        RelayTunnelType.SSH_WS,
+                        RelayTunnelType.SOCKS5
                     ).forEach { type ->
                         val active = selectedRelayType == type
                         Surface(
                             onClick = {
                                 selectedRelayType = type
-                                if (portText == "1080" && type == RelayTunnelType.HTTP_CONNECT) {
-                                    portText = "443"
-                                } else if (portText == "443" && type != RelayTunnelType.HTTP_CONNECT) {
-                                    portText = "1080"
+                                portText = when (type) {
+                                    RelayTunnelType.SSH_TLS, RelayTunnelType.HTTP_CONNECT -> "443"
+                                    RelayTunnelType.SSH_TUNNEL -> "22"
+                                    RelayTunnelType.SSH_WS -> "80"
+                                    RelayTunnelType.SOCKS5, RelayTunnelType.SOCKS4 -> "1080"
+                                    RelayTunnelType.WIREGUARD_TUNNEL -> "51820"
                                 }
                             },
                             shape = RoundedCornerShape(10.dp),
@@ -1016,7 +1089,7 @@ private fun AddCustomNodeDialog(
                                     text = type.badgeLabel,
                                     style = MaterialTheme.typography.labelLarge.copy(
                                         fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
-                                        fontSize = 10.5.sp
+                                        fontSize = 10.sp
                                     ),
                                     color = if (active) {
                                         MaterialTheme.colorScheme.onPrimaryContainer
@@ -1036,7 +1109,7 @@ private fun AddCustomNodeDialog(
                         value = countryName,
                         onValueChange = { countryName = it },
                         label = { Text("Country") },
-                        placeholder = { Text("Germany") },
+                        placeholder = { Text("Singapore") },
                         singleLine = true,
                         modifier = Modifier
                             .weight(1f)
@@ -1046,7 +1119,7 @@ private fun AddCustomNodeDialog(
                         value = countryCode,
                         onValueChange = { countryCode = it.take(2).uppercase() },
                         label = { Text("ISO") },
-                        placeholder = { Text("DE") },
+                        placeholder = { Text("SG") },
                         singleLine = true,
                         modifier = Modifier
                             .width(78.dp)
@@ -1056,8 +1129,8 @@ private fun AddCustomNodeDialog(
                 OutlinedTextField(
                     value = cityName,
                     onValueChange = { cityName = it },
-                    label = { Text("City / Location") },
-                    placeholder = { Text("Frankfurt") },
+                    label = { Text("City / Provider (Opt)") },
+                    placeholder = { Text("SSHOcean Singapore") },
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1068,7 +1141,7 @@ private fun AddCustomNodeDialog(
                         value = ipAddress,
                         onValueChange = { ipAddress = it },
                         label = { Text("IP / Host") },
-                        placeholder = { Text("1.2.3.4") },
+                        placeholder = { Text("sg1.sshocean.net") },
                         singleLine = true,
                         modifier = Modifier
                             .weight(1f)
@@ -1080,15 +1153,36 @@ private fun AddCustomNodeDialog(
                         label = { Text("Port") },
                         singleLine = true,
                         modifier = Modifier
-                            .width(92.dp)
+                            .width(86.dp)
                             .testTag("custom_node_port_input")
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = sniHost,
+                        onValueChange = { sniHost = it },
+                        label = { Text("SNI Host (Opt)") },
+                        placeholder = { Text("cdn.example.com") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("custom_node_sni_input")
+                    )
+                    OutlinedTextField(
+                        value = udpPortText,
+                        onValueChange = { udpPortText = it.filter { ch -> ch.isDigit() } },
+                        label = { Text("UDP Port") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .width(96.dp)
+                            .testTag("custom_node_udp_input")
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = username,
                         onValueChange = { username = it },
-                        label = { Text("Username (Opt)") },
+                        label = { Text("SSH Username") },
                         singleLine = true,
                         modifier = Modifier
                             .weight(1f)
@@ -1097,7 +1191,7 @@ private fun AddCustomNodeDialog(
                     OutlinedTextField(
                         value = password,
                         onValueChange = { password = it },
-                        label = { Text("Password (Opt)") },
+                        label = { Text("Password") },
                         visualTransformation = PasswordVisualTransformation(),
                         singleLine = true,
                         modifier = Modifier
@@ -1105,11 +1199,26 @@ private fun AddCustomNodeDialog(
                             .testTag("custom_node_password_input")
                     )
                 }
+                if (selectedRelayType == RelayTunnelType.SSH_TUNNEL ||
+                    selectedRelayType == RelayTunnelType.SSH_TLS ||
+                    selectedRelayType == RelayTunnelType.SSH_WS
+                ) {
+                    OutlinedTextField(
+                        value = sshPrivateKey,
+                        onValueChange = { sshPrivateKey = it },
+                        label = { Text("SSH Private Key PEM (Optional)") },
+                        placeholder = { Text("-----BEGIN OPENSSH PRIVATE KEY-----") },
+                        maxLines = 3,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("custom_node_key_input")
+                    )
+                }
                 OutlinedTextField(
                     value = operatorName,
                     onValueChange = { operatorName = it },
                     label = { Text("Label (Optional)") },
-                    placeholder = { Text("Private Pro Server") },
+                    placeholder = { Text("Fast SSH TLS") },
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1135,7 +1244,8 @@ private fun AddCustomNodeDialog(
                     }
                     Button(
                         onClick = {
-                            val parsedPort = portText.toIntOrNull() ?: 1080
+                            val parsedPort = portText.toIntOrNull() ?: 443
+                            val parsedUdpPort = udpPortText.toIntOrNull() ?: 7300
                             onConfirmAdd(
                                 countryName,
                                 countryCode,
@@ -1145,7 +1255,10 @@ private fun AddCustomNodeDialog(
                                 operatorName,
                                 selectedRelayType,
                                 username,
-                                password
+                                password,
+                                sshPrivateKey,
+                                sniHost,
+                                parsedUdpPort
                             )
                         },
                         enabled = ipAddress.isNotBlank(),
@@ -1160,6 +1273,366 @@ private fun AddCustomNodeDialog(
                             text = "Verify & Add",
                             style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
                         )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Clean Material 3 Live Internet SSH / TLS / UDP Fetcher & 1-Tap WebView Auto-Grabber Dialog.
+ * Supports:
+ * 1. Direct background auto-fetching from SSH JSON / `ssh://` / Base64 subscription API feeds.
+ * 2. Embedded 1-tap Provider WebView with JS form auto-filler + instant DOM account extraction for
+ *    Cloudflare/CAPTCHA-protected free 1-day/3-day/7-day SSH providers (`SSHOcean`, `JagoVPN`,
+ *    `ServerSSH`, `VPNJantit`, `OpenTunnel`).
+ * 3. Instant multi-format paste import (`ssh://user:pass@host:port`, JSON, or provider output text).
+ */
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun FreeSshAutoFetchDialog(
+    initialFeedUrl: String,
+    isFetching: Boolean,
+    captchaGatedProviders: List<String>,
+    onDismiss: () -> Unit,
+    onAutoFetchFeed: (String) -> Unit,
+    onImportCapturedPayload: (rawPayload: String, providerName: String) -> Unit
+) {
+    var feedUrl by remember(initialFeedUrl) { mutableStateOf(initialFeedUrl) }
+    var pastePayload by remember { mutableStateOf("") }
+    var activeProvider by remember { mutableStateOf<EphemeralAccountProvisioner.SshProviderPreset?>(null) }
+    var activeWebView by remember { mutableStateOf<WebView?>(null) }
+    var webPageTitle by remember { mutableStateOf("") }
+
+    BackHandler {
+        if (activeProvider != null) {
+            activeProvider = null
+            activeWebView = null
+        } else {
+            onDismiss()
+        }
+    }
+
+    val autoFillJs = remember {
+        """
+        (function() {
+            var r = Math.random().toString(36).substring(2, 7);
+            var u = 'avpn' + r;
+            var p = 'Pass' + r + '9';
+            var inputs = document.querySelectorAll('input');
+            for (var i = 0; i < inputs.length; i++) {
+                var el = inputs[i];
+                var n = ((el.name || '') + ' ' + (el.id || '') + ' ' + (el.placeholder || '')).toLowerCase();
+                if (el.type === 'text' && (n.indexOf('user') >= 0 || n.indexOf('login') >= 0)) {
+                    el.value = u;
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                } else if (el.type === 'password' || n.indexOf('pass') >= 0) {
+                    el.value = p;
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+            }
+        })();
+        """.trimIndent()
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.50f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onDismiss
+            )
+            .padding(horizontal = 16.dp, vertical = 20.dp)
+            .testTag("free_ssh_fetcher_dialog"),
+        contentAlignment = Alignment.Center
+    ) {
+        M3SectionCard(
+            cornerRadius = 20.dp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 460.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {}
+                )
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 18.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CloudDownload,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Column {
+                            Text(
+                                text = "Free SSH / TLS / UDP Fetcher",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Live 1–7 day accounts • Auto-rotates when expired",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.testTag("close_free_ssh_fetcher_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close SSH fetcher"
+                        )
+                    }
+                }
+
+                if (activeProvider == null) {
+                    // 1. Direct SSH API / Subscription Feed Auto-Fetch
+                    OutlinedTextField(
+                        value = feedUrl,
+                        onValueChange = { feedUrl = it },
+                        label = { Text("SSH API / ssh:// Subscription Feed (Optional)") },
+                        placeholder = { Text("https://your-panel.example/api/ssh") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("ssh_feed_url_input")
+                    )
+
+                    Button(
+                        onClick = { onAutoFetchFeed(feedUrl.trim()) },
+                        enabled = !isFetching,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                            .testTag("auto_fetch_ssh_now_button")
+                    ) {
+                        if (isFetching) {
+                            CircularProgressIndicator(
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Scanning Live SSH Endpoints…")
+                        } else {
+                            Text(
+                                text = "Auto-Fetch Over Internet Now",
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                            )
+                        }
+                    }
+
+                    if (captchaGatedProviders.isNotEmpty()) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = AmberHandshaking.copy(alpha = 0.14f),
+                            border = BorderStroke(1.dp, AmberHandshaking.copy(alpha = 0.35f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "${captchaGatedProviders.joinToString(", ")} require CAPTCHA/Cloudflare. Tap any provider below to auto-fill & grab a free 1–7d SSH account in 1 tap.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.padding(10.dp)
+                            )
+                        }
+                    }
+
+                    // 2. 1-Tap Official Free SSH Providers (In-App WebView Auto-Grabber)
+                    Text(
+                        text = "1-Tap Live Free SSH Providers (TLS 443 + UDP 7300)",
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        EphemeralAccountProvisioner.OFFICIAL_PROVIDERS.forEach { preset ->
+                            Surface(
+                                onClick = {
+                                    activeProvider = preset
+                                    webPageTitle = preset.name
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("provider_chip_${preset.id}")
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                ) {
+                                    Text(
+                                        text = "${preset.name} (${preset.defaultValidityDays}d)",
+                                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                    Text(
+                                        text = "Tap to Auto-Grab",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // 3. Direct Multi-Format Paste & Connect
+                    OutlinedTextField(
+                        value = pastePayload,
+                        onValueChange = { pastePayload = it },
+                        label = { Text("Or Paste ssh:// / JSON / Provider Confirmation Text") },
+                        placeholder = { Text("ssh://user:pass@sg1.sshocean.net:443#SG") },
+                        minLines = 2,
+                        maxLines = 4,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("paste_ssh_payload_input")
+                    )
+
+                    Button(
+                        onClick = { onImportCapturedPayload(pastePayload, "Imported SSH") },
+                        enabled = pastePayload.isNotBlank(),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                            .testTag("import_pasted_ssh_button")
+                    ) {
+                        Text(
+                            text = "Verify & Import SSH Account",
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                        )
+                    }
+                } else {
+                    val currentPreset = activeProvider!!
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "${currentPreset.name}: ${webPageTitle.ifBlank { currentPreset.createHint }}",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                activeProvider = null
+                                activeWebView = null
+                            },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.height(34.dp)
+                        ) {
+                            Text("Providers", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+
+                    AndroidView(
+                        factory = { ctx ->
+                            WebView(ctx).apply {
+                                settings.javaScriptEnabled = true
+                                settings.domStorageEnabled = true
+                                settings.useWideViewPort = true
+                                settings.loadWithOverviewMode = true
+                                webViewClient = object : WebViewClient() {
+                                    override fun onPageFinished(view: WebView?, url: String?) {
+                                        webPageTitle = view?.title.orEmpty()
+                                        view?.evaluateJavascript(autoFillJs, null)
+                                    }
+                                }
+                                loadUrl(currentPreset.browseUrl)
+                                activeWebView = this
+                            }
+                        },
+                        update = { view ->
+                            activeWebView = view
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(320.dp)
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                activeWebView?.evaluateJavascript(autoFillJs, null)
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp)
+                                .testTag("autofill_webview_ssh_button")
+                        ) {
+                            Text(
+                                text = "Auto-Fill",
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                        Button(
+                            onClick = {
+                                val wv = activeWebView
+                                if (wv != null) {
+                                    wv.evaluateJavascript("(document.body ? document.body.innerText : '')") { rawJsResult ->
+                                        val decoded = runCatching {
+                                            JSONObject("{\"v\":$rawJsResult}").optString("v")
+                                        }.getOrDefault(rawJsResult.orEmpty())
+                                        onImportCapturedPayload(decoded, currentPreset.name)
+                                    }
+                                }
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .weight(1.6f)
+                                .height(44.dp)
+                                .testTag("grab_webview_ssh_button")
+                        ) {
+                            Text(
+                                text = "Grab SSH & Connect",
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
                     }
                 }
             }

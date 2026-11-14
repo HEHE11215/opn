@@ -83,6 +83,10 @@ data class VpnUiState(
     val isSyncingApi: Boolean = false,
     val showAddCustomNodeModal: Boolean = false,
     val showDeveloperCreditsModal: Boolean = false,
+    val showFreeSshFetcherModal: Boolean = false,
+    val isFetchingSshAccounts: Boolean = false,
+    val sshCaptchaGatedProviders: List<String> = emptyList(),
+    val isProbingLatency: Boolean = false,
     val activePopup: VpnEventPopup? = null
 )
 
@@ -94,6 +98,10 @@ private data class FilterBarState(
     val isSyncingApi: Boolean = false,
     val showAddCustomNodeModal: Boolean = false,
     val showDeveloperCreditsModal: Boolean = false,
+    val showFreeSshFetcherModal: Boolean = false,
+    val isFetchingSshAccounts: Boolean = false,
+    val sshCaptchaGatedProviders: List<String> = emptyList(),
+    val isProbingLatency: Boolean = false,
     val activePopup: VpnEventPopup? = null,
     val manualSelectedNodeOverride: VpnNode? = null,
     val isAutoFastestOverride: Boolean? = null
@@ -213,6 +221,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             isSyncingApi = filter.isSyncingApi,
             showAddCustomNodeModal = filter.showAddCustomNodeModal,
             showDeveloperCreditsModal = filter.showDeveloperCreditsModal,
+            showFreeSshFetcherModal = filter.showFreeSshFetcherModal,
+            isFetchingSshAccounts = filter.isFetchingSshAccounts,
+            sshCaptchaGatedProviders = filter.sshCaptchaGatedProviders,
+            isProbingLatency = filter.isProbingLatency,
             activePopup = filter.activePopup
         )
     }.stateIn(
@@ -454,6 +466,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         _filterState.update { it.copy(showAddCustomNodeModal = show) }
     }
 
+    fun setShowFreeSshFetcherModal(show: Boolean) {
+        _filterState.update { it.copy(showFreeSshFetcherModal = show) }
+    }
+
     fun enableAutoFastestModeAndGetNode(): VpnNode {
         val fastest = _nodes.value.filter { it.isVerifiedWorking && it.pingMs > 0 }
             .minByOrNull { it.pingMs }
@@ -536,6 +552,58 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             repository.setSelectedNode(node.id, isAutoFastest = false, node = node)
         }
+        probeSelectedNodeLatencyNow(node)
+    }
+
+    /**
+     * Measures a live protected TCP 3-way handshake ping in milliseconds for the currently selected
+     * (or active) relay node so the Real-Time Latency Monitor gauge updates immediately on demand.
+     */
+    fun probeSelectedNodeLatencyNow(targetOverride: VpnNode? = null) {
+        val target = targetOverride ?: uiState.value.selectedNode
+        if (target.ipAddress.isBlank() || target.port !in 1..65535) return
+        if (_filterState.value.isProbingLatency) return
+
+        viewModelScope.launch(Dispatchers.IO) {
+            _filterState.update { it.copy(isProbingLatency = true) }
+            val measuredMs = LocalTunnelGateway.measureTcpHandshakeDurationMs(
+                ipOrHost = target.ipAddress,
+                port = target.port,
+                timeoutMs = 2000,
+                protectSocket = AetherVpnStateBus.protectSocketCallback
+            )
+            if (measuredMs != null) {
+                val updatedPool = _nodes.value.map { n ->
+                    if (n.ipAddress == target.ipAddress && n.port == target.port) {
+                        n.copy(pingMs = measuredMs)
+                    } else {
+                        n
+                    }
+                }
+                _nodes.value = updatedPool
+                AetherVpnStateBus.updateNodePool(updatedPool)
+                _filterState.update { state ->
+                    val currentManual = state.manualSelectedNodeOverride
+                    if (currentManual != null &&
+                        currentManual.ipAddress == target.ipAddress &&
+                        currentManual.port == target.port
+                    ) {
+                        state.copy(manualSelectedNodeOverride = currentManual.copy(pingMs = measuredMs))
+                    } else {
+                        state
+                    }
+                }
+                AetherVpnStateBus.updateTelemetry { tel ->
+                    val act = tel.activeNode
+                    if (act != null && act.ipAddress == target.ipAddress && act.port == target.port) {
+                        tel.copy(activeNode = act.copy(pingMs = measuredMs))
+                    } else {
+                        tel
+                    }
+                }
+            }
+            _filterState.update { it.copy(isProbingLatency = false) }
+        }
     }
 
     fun toggleFavorite(countryCodeOrId: String) {
@@ -601,9 +669,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _filterState.update { it.copy(isSyncingApi = true) }
             val directIp = AetherVpnStateBus.telemetry.value.deviceDirectIp
+            val feedUrl = uiState.value.preferences.sshProviderFeedUrl
 
             val result = repository.fetchLivePublicNodes(
                 deviceDirectIp = directIp,
+                sshFeedUrl = feedUrl,
                 onWaveVerified = { waveNodes ->
                     val combined = repository.deduplicateFastestPerCountry(_customNodes.value + waveNodes)
                     _nodes.value = combined
@@ -666,9 +736,12 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         port: Int,
         operatorName: String,
         protocol: VpnProtocol,
-        relayType: RelayTunnelType = RelayTunnelType.SOCKS5,
+        relayType: RelayTunnelType = RelayTunnelType.SSH_TLS,
         username: String = "",
-        password: String = ""
+        password: String = "",
+        sshPrivateKey: String = "",
+        sniHost: String = "",
+        udpPort: Int = 7300
     ) {
         val cleanIp = ipAddress.trim()
         if (cleanIp.isEmpty()) return
@@ -683,16 +756,21 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 port = safePort,
                 countryName = countryName.trim().ifEmpty { PublicNodeRepository.countryNameFromCode(cleanCode) },
                 countryCode = cleanCode,
-                cityName = cityName.trim().ifEmpty { "Custom Server" },
+                cityName = cityName.trim().ifEmpty { "Custom SSH Server" },
                 flagEmoji = PublicNodeRepository.countryCodeToFlagEmoji(cleanCode),
                 region = PublicNodeRepository.mapCountryCodeToRegion(cleanCode),
                 pingMs = -1,
                 downloadSpeedMbps = 500.0,
-                operatorName = operatorName.trim().ifEmpty { "Custom Server" },
+                operatorName = operatorName.trim().ifEmpty { "Custom SSH (${relayType.badgeLabel})" },
                 protocol = protocol,
                 relayType = relayType,
                 username = username.trim(),
                 password = password,
+                sshPrivateKey = sshPrivateKey.trim(),
+                sniHost = sniHost.trim().ifEmpty { cleanIp },
+                tlsPort = if (relayType == RelayTunnelType.SSH_TLS) safePort else 443,
+                udpPort = udpPort.coerceIn(1, 65535),
+                providerName = operatorName.trim().ifEmpty { "Custom Server" },
                 isCustomNode = true,
                 isVerifiedWorking = false
             )
@@ -701,7 +779,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             val e2eResult = LocalTunnelGateway.verifyNodeEndToEndTls(
                 node = baseNode,
                 deviceDirectIp = directIp,
-                timeoutMs = 3500,
+                timeoutMs = 5500,
                 protectSocket = AetherVpnStateBus.protectSocketCallback,
                 protectDatagram = AetherVpnStateBus.protectDatagramCallback
             )
@@ -723,6 +801,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 isVerifiedWorking = e2eResult != null
             )
 
+            if (customNode.isSshProtocol && customNode.hasValidEphemeralAccount()) {
+                com.example.vpn.EphemeralAccountProvisioner.saveAccountToVault(getApplication(), customNode)
+            }
+
             _customNodes.update { existing ->
                 listOf(customNode) + existing.filterNot { it.ipAddress == cleanIp && it.port == safePort }
             }
@@ -741,64 +823,147 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 subtitle = if (customNode.isVerifiedWorking) {
                     "Exit IP ${customNode.verifiedExitIp} • ${customNode.relayType.badgeLabel}"
                 } else if (customNode.pingMs > 0) {
-                    "$cleanIp:$safePort reachable (${customNode.pingMs} ms), TLS check pending"
+                    "$cleanIp:$safePort reachable (${customNode.pingMs} ms), TLS/SSH check pending"
                 } else {
                     "$cleanIp:$safePort unreachable — check host, port, or credentials"
                 },
                 flagEmoji = customNode.flagEmoji,
                 detailBadge = if (customNode.pingMs > 0) "⚡ ${customNode.pingMs} ms Live" else "Custom Server",
-                badgeText = "Made with love by Ashir ♥️",
+                badgeText = "Developed by Ashir ♥️",
                 tone = if (customNode.isVerifiedWorking) VpnPopupTone.CONNECTED else VpnPopupTone.INFO
             )
         }
     }
 
     /**
-     * Explicitly provisions a brand-new 4-day (3-to-5-day) SSH/WireGuard high-bandwidth account
-     * for the active or selected server and updates the UI state immediately.
+     * Fetches live free 1-day/3-day/7-day SSH/TLS/UDP accounts over the internet (from configured
+     * SSH API/feed URLs and non-CAPTCHA free SSH provider forms). If web providers are CAPTCHA-gated,
+     * opens the 1-Tap Free SSH Provider Auto-Grabber UI so the user can auto-fill & grab cleanly.
      */
-    fun renewEphemeralSshAccountNow() {
-        val currentTarget = uiState.value.telemetry.activeNode ?: uiState.value.selectedNode
+    fun fetchFreeSshFromInternetNow(customFeedUrl: String? = null) {
         viewModelScope.launch {
-            val freshNode = com.example.vpn.EphemeralAccountProvisioner.ensureFreshAccountForConnection(
+            val effectiveFeed = (customFeedUrl ?: uiState.value.preferences.sshProviderFeedUrl).trim()
+            if (customFeedUrl != null) {
+                repository.updateSshProviderFeedUrl(effectiveFeed)
+            }
+            _filterState.update { it.copy(isFetchingSshAccounts = true) }
+
+            val harvest = com.example.vpn.EphemeralAccountProvisioner.fetchLiveSshAccountsFromInternet(
                 context = getApplication(),
-                node = currentTarget,
-                forceRenew = true
+                customFeedUrl = effectiveFeed
             )
-            _nodes.update { list ->
-                list.map {
-                    if (it.countryCode.equals(freshNode.countryCode, ignoreCase = true)) {
-                        it.copy(
-                            username = freshNode.username,
-                            password = freshNode.password,
-                            accountExpiresAtEpochMs = freshNode.accountExpiresAtEpochMs,
-                            wireguardPublicKey = freshNode.wireguardPublicKey,
-                            provisionedAccountId = freshNode.provisionedAccountId
-                        )
-                    } else {
-                        it
-                    }
+
+            val readySsh = harvest.readyNodes
+            if (readySsh.isNotEmpty()) {
+                _customNodes.update { existing ->
+                    (readySsh + existing).distinctBy { "${it.ipAddress}:${it.port}:${it.username}" }
+                }
+                val merged = repository.deduplicateFastestPerCountry(_customNodes.value + _nodes.value)
+                _nodes.value = merged
+                AetherVpnStateBus.updateNodePool(merged)
+
+                val primarySsh = readySsh.first()
+                selectManualNode(primarySsh)
+                _filterState.update {
+                    it.copy(
+                        isFetchingSshAccounts = false,
+                        sshCaptchaGatedProviders = harvest.captchaGatedProviders,
+                        showFreeSshFetcherModal = false
+                    )
+                }
+                showEventPopup(
+                    title = "Fetched ${readySsh.size} Live SSH Account${if (readySsh.size > 1) "s" else ""}!",
+                    subtitle = "${primarySsh.providerName}: ${primarySsh.username}@${primarySsh.ipAddress}:${primarySsh.port} (${primarySsh.remainingValidityLabel()})",
+                    flagEmoji = primarySsh.flagEmoji,
+                    detailBadge = "TLS ${primarySsh.tlsPort} • UDP ${primarySsh.udpPort}",
+                    tone = VpnPopupTone.CONNECTED
+                )
+            } else {
+                _filterState.update {
+                    it.copy(
+                        isFetchingSshAccounts = false,
+                        sshCaptchaGatedProviders = harvest.captchaGatedProviders,
+                        showFreeSshFetcherModal = true
+                    )
                 }
             }
-            if (_filterState.value.manualSelectedNodeOverride != null) {
-                _filterState.update { it.copy(manualSelectedNodeOverride = freshNode) }
+        }
+    }
+
+    /**
+     * Imports a newly created SSH / SSH-TLS / UDP account captured via the In-App Provider Auto-Grabber
+     * or pasted SSH config/URI/JSON, verifies SSH-2 handshake + Exit IP, and optionally connects right away.
+     */
+    fun importFreeSshAccountPayload(
+        rawPayload: String,
+        providerName: String = "Free SSH Provider",
+        connectNow: (VpnNode) -> Unit = {}
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val parsedList = com.example.vpn.EphemeralAccountProvisioner.parseFeedPayload(
+                rawPayload = rawPayload,
+                sourceName = providerName
+            )
+            if (parsedList.isEmpty()) {
+                showEventPopup(
+                    title = "Could Not Detect SSH Account",
+                    subtitle = "Finish creating the free SSH account on the provider page or paste Host/User/Pass text.",
+                    flagEmoji = "⚠️",
+                    detailBadge = "Parser Ready",
+                    tone = VpnPopupTone.INFO
+                )
+                return@launch
             }
-            AetherVpnStateBus.updateTelemetry { current ->
-                if (current.activeNode != null) {
-                    current.copy(activeNode = freshNode)
-                } else {
-                    current
-                }
+
+            val directIp = AetherVpnStateBus.telemetry.value.deviceDirectIp
+            val firstParsed = parsedList.first()
+            val probe = com.example.vpn.SshTunnelManager.verifySshNodeEndToEndTls(
+                node = firstParsed,
+                deviceDirectIp = directIp,
+                timeoutMs = 6000,
+                protectSocket = AetherVpnStateBus.protectSocketCallback
+            )
+
+            val verifiedNode = if (probe.success) {
+                firstParsed.copy(
+                    pingMs = probe.tcpHandshakeMs.coerceAtLeast(1),
+                    verifiedExitIp = probe.exitIp.orEmpty(),
+                    isVerifiedWorking = true
+                )
+            } else {
+                firstParsed
             }
-            repository.saveLastSelectedNode(freshNode)
+
+            com.example.vpn.EphemeralAccountProvisioner.saveAccountToVault(getApplication(), verifiedNode)
+            _customNodes.update { existing ->
+                (listOf(verifiedNode) + parsedList.drop(1) + existing)
+                    .distinctBy { "${it.ipAddress}:${it.port}:${it.username}" }
+            }
+            val merged = repository.deduplicateFastestPerCountry(_customNodes.value + _nodes.value)
+            _nodes.value = merged
+            AetherVpnStateBus.updateNodePool(merged)
+
+            selectManualNode(verifiedNode)
+            _filterState.update { it.copy(showFreeSshFetcherModal = false) }
             showEventPopup(
-                title = "New 4-Day SSH/WG Account!",
-                subtitle = "User: ${freshNode.username} • Full Bandwidth Active for ${freshNode.countryName}",
-                flagEmoji = freshNode.flagEmoji,
-                detailBadge = freshNode.remainingValidityLabel(),
+                title = "SSH Account Ready (${verifiedNode.username})",
+                subtitle = "${verifiedNode.ipAddress}:${verifiedNode.port} • TLS ${verifiedNode.tlsPort} • UDP ${verifiedNode.udpPort} • ${verifiedNode.remainingValidityLabel()}",
+                flagEmoji = verifiedNode.flagEmoji,
+                detailBadge = if (probe.success) "SSH-2 Verified (${verifiedNode.pingMs} ms)" else "Saved to SSH Vault",
                 tone = VpnPopupTone.CONNECTED
             )
+            if (probe.success) {
+                connectNow(verifiedNode)
+            }
         }
+    }
+
+    /**
+     * Triggers live internet fetch/renewal of the active/selected SSH account, or opens the
+     * 1-Tap Free SSH Provider Fetcher if manual CAPTCHA completion is needed.
+     */
+    fun renewEphemeralSshAccountNow() {
+        fetchFreeSshFromInternetNow()
     }
 
     fun startVpnServiceWithNode(
@@ -822,30 +987,34 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        val targetNode = com.example.vpn.EphemeralAccountProvisioner.attachCachedOrQuickAccount(
-            context = context,
-            node = rawTargetNode
-        )
-
         viewModelScope.launch {
-            val freshProvisioned = com.example.vpn.EphemeralAccountProvisioner.ensureFreshAccountForConnection(
+            val attached = com.example.vpn.EphemeralAccountProvisioner.attachCachedOrQuickAccount(
                 context = context,
-                node = targetNode,
-                forceRenew = !targetNode.hasValidEphemeralAccount()
+                node = rawTargetNode
             )
-            repository.saveLastSelectedNode(freshProvisioned)
-        }
+            val resolvedNode = if (attached.isSshProtocol && attached.isAccountExpired()) {
+                com.example.vpn.EphemeralAccountProvisioner.ensureFreshAccountForConnection(
+                    context = context,
+                    node = attached,
+                    customFeedUrl = prefs.sshProviderFeedUrl,
+                    forceRenew = true
+                )
+            } else {
+                attached
+            }
+            repository.saveLastSelectedNode(resolvedNode)
 
-        val intent = AVpnQuickTileService.buildConnectServiceIntent(
-            context = context,
-            node = targetNode,
-            isManualSelection = isManualSelection,
-            dnsServer = prefs.dnsServer
-        )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(intent)
-        } else {
-            context.startService(intent)
+            val intent = AVpnQuickTileService.buildConnectServiceIntent(
+                context = context,
+                node = resolvedNode,
+                isManualSelection = isManualSelection,
+                dnsServer = prefs.dnsServer
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
         }
     }
 

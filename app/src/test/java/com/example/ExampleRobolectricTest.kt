@@ -694,10 +694,62 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `ephemeral account provisioner auto creates and renews 4 day SSH and WireGuard accounts`() = runBlocking {
+    fun `internet ssh provisioner parses ssh uris json and provider text into persistent expiry vault`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        val baseNode = VpnNode(
-            id = "country-NL",
+        val now = System.currentTimeMillis()
+
+        // 1. Parse ssh:// URI + JSON + provider confirmation text with TLS 443, UDP 7300 & PEM key
+        val uriNodes = com.example.vpn.EphemeralAccountProvisioner.parseFeedPayload(
+            rawPayload = "ssh://fastuser:secret99@sg1.sshocean.net:443?type=tls#Singapore",
+            sourceName = "SSHOcean",
+            nowEpochMs = now
+        )
+        assertEquals(1, uriNodes.size)
+        val uriNode = uriNodes.first()
+        assertEquals("sg1.sshocean.net", uriNode.ipAddress)
+        assertEquals(443, uriNode.port)
+        assertEquals(RelayTunnelType.SSH_TLS, uriNode.relayType)
+        assertEquals("SG", uriNode.countryCode)
+        assertEquals("fastuser", uriNode.username)
+        assertEquals("secret99", uriNode.password)
+        assertFalse(uriNode.isAccountExpired(now))
+
+        val providerText = """
+            Host / IP: de2.serverssh.net
+            Username: sshde01
+            Password: p@ss77
+            SSL/TLS Port: 443
+            UDPGW Port: 7300
+            Valid Until: 3 days
+            -----BEGIN OPENSSH PRIVATE KEY-----
+            b3BlbnNzaC1rZXktdjEAAAAABG5vbmU=
+            -----END OPENSSH PRIVATE KEY-----
+        """.trimIndent()
+        val parsedTextNodes = com.example.vpn.EphemeralAccountProvisioner.parseFeedPayload(
+            rawPayload = providerText,
+            sourceName = "ServerSSH",
+            nowEpochMs = now
+        )
+        assertEquals(1, parsedTextNodes.size)
+        val deNode = parsedTextNodes.first()
+        assertEquals("DE", deNode.countryCode)
+        assertEquals(443, deNode.tlsPort)
+        assertEquals(7300, deNode.udpPort)
+        assertTrue(deNode.sshPrivateKey.contains("OPENSSH PRIVATE KEY"))
+
+        // 2. Persist active account & verify expired accounts are automatically evicted from vault
+        com.example.vpn.EphemeralAccountProvisioner.saveAccountToVault(context, deNode)
+        val expiredNode = uriNode.copy(accountExpiresAtEpochMs = now - 60_000L)
+        assertTrue(expiredNode.isAccountExpired(now))
+        com.example.vpn.EphemeralAccountProvisioner.saveAccountToVault(context, expiredNode)
+
+        val validVault = com.example.vpn.EphemeralAccountProvisioner.getValidVaultNodes(context, now)
+        assertTrue(validVault.any { it.username == "sshde01" })
+        assertFalse(validVault.any { it.username == "fastuser" })
+
+        // 3. Real SshTunnelManager refuses connections missing real SSH credentials
+        val unauthenticatedSshNode = VpnNode(
+            id = "ssh-no-creds",
             hostName = "198.51.100.44",
             ipAddress = "198.51.100.44",
             port = 443,
@@ -709,43 +761,88 @@ class ExampleRobolectricTest {
             pingMs = 31,
             downloadSpeedMbps = 100.0,
             operatorName = "NL Server",
-            relayType = RelayTunnelType.SSH_TUNNEL
+            relayType = RelayTunnelType.SSH_TLS
         )
-
-        val provisioned = com.example.vpn.EphemeralAccountProvisioner.ensureFreshAccountForConnection(
-            context = context,
-            node = baseNode,
-            forceRenew = true
+        val probe = com.example.vpn.SshTunnelManager.verifySshNodeEndToEndTls(
+            node = unauthenticatedSshNode,
+            deviceDirectIp = null,
+            timeoutMs = 500
         )
-        assertTrue(provisioned.hasValidEphemeralAccount())
-        assertTrue(provisioned.username.startsWith("ssh-nl-"))
-        assertTrue(provisioned.password.isNotBlank())
-        assertTrue(provisioned.wireguardPublicKey.isNotBlank())
-        assertTrue(provisioned.remainingValidityLabel().contains("Free SSH/WG"))
+        assertFalse(probe.success)
+        assertEquals("SSH Account Required", probe.failure?.stage)
 
-        val rotated = com.example.vpn.EphemeralAccountProvisioner.ensureFreshAccountForConnection(
-            context = context,
-            node = provisioned,
-            forceRenew = true
-        )
-        assertTrue(rotated.hasValidEphemeralAccount())
-        assertTrue(rotated.username != provisioned.username)
-
-        var renewClicked = 0
+        // 4. Verify EphemeralSshAccountCard renders live SSH account and Renew / Fetch SSH clicks
+        var fetchClicks = 0
         composeRule.setContent {
             AetherNodeTheme(darkTheme = false) {
                 com.example.ui.EphemeralSshAccountCard(
-                    node = rotated,
-                    onRenewAccount = { renewClicked++ }
+                    node = deNode,
+                    onRenewAccount = { fetchClicks++ }
                 )
             }
         }
 
         composeRule.onNodeWithTag("ephemeral_ssh_account_card").assertIsDisplayed()
-        composeRule.onNodeWithText("Free SSH / WG Account").assertIsDisplayed()
+        composeRule.onNodeWithText("Free SSH / TLS / UDP").assertIsDisplayed()
+        composeRule.onNodeWithText("ServerSSH", substring = true).assertIsDisplayed()
         composeRule.onNodeWithTag("renew_ssh_account_button").performClick()
         composeRule.waitForIdle()
-        assertEquals(1, renewClicked)
+        assertEquals(1, fetchClicks)
+    }
+
+    @Test
+    fun `real time latency monitor displays millisecond ping gauge and supports instant re-probe`() {
+        val nodeState = androidx.compose.runtime.mutableStateOf(
+            VpnNode(
+                id = "country-DE",
+                hostName = "198.51.100.12",
+                ipAddress = "198.51.100.12",
+                port = 1080,
+                countryName = "Germany",
+                countryCode = "DE",
+                cityName = "Frankfurt",
+                flagEmoji = "🇩🇪",
+                region = VpnRegion.EUROPE,
+                pingMs = 48,
+                downloadSpeedMbps = 180.0,
+                operatorName = "DE Relay"
+            )
+        )
+        var probeClicks = 0
+
+        composeRule.setContent {
+            AetherNodeTheme(darkTheme = false) {
+                com.example.ui.RealTimeLatencyMonitorCard(
+                    node = nodeState.value,
+                    isProbing = false,
+                    isSyncing = false,
+                    onProbeNow = { probeClicks++ }
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("realtime_latency_monitor_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("latency_gauge_bar").assertIsDisplayed()
+        composeRule.onNodeWithTag("latency_ping_value_text").assertTextEquals("48 ms")
+        composeRule.onNodeWithText("Ultra-Fast").assertIsDisplayed()
+
+        // Update measured latency and confirm gauge tier transitions dynamically
+        composeRule.runOnUiThread {
+            nodeState.value = nodeState.value.copy(pingMs = 215)
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("latency_ping_value_text").assertTextEquals("215 ms")
+        composeRule.onNodeWithText("Moderate").assertIsDisplayed()
+
+        // Tap Ping button
+        composeRule.onNodeWithTag("latency_ping_now_button").performClick()
+        composeRule.waitForIdle()
+        assertEquals(1, probeClicks)
+
+        // Verify Stage-1 candidate backup pool updates on AetherVpnStateBus for fast failover
+        AetherVpnStateBus.updateCandidateBackupPool(listOf(nodeState.value))
+        assertEquals(1, AetherVpnStateBus.rawCandidatePool.value.size)
+        assertEquals("198.51.100.12", AetherVpnStateBus.rawCandidatePool.value.first().ipAddress)
     }
 }
 

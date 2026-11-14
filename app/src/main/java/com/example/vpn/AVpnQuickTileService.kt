@@ -306,6 +306,12 @@ class AVpnQuickTileService : TileService() {
                 putExtra(AetherVpnService.EXTRA_NODE_EXIT_IP, node.verifiedExitIp)
                 putExtra(AetherVpnService.EXTRA_NODE_VERIFIED, node.isVerifiedWorking)
                 putExtra(AetherVpnService.EXTRA_NODE_IS_CUSTOM, node.isCustomNode)
+                putExtra(AetherVpnService.EXTRA_NODE_EXPIRES_AT, node.accountExpiresAtEpochMs)
+                putExtra(AetherVpnService.EXTRA_NODE_TLS_PORT, node.tlsPort)
+                putExtra(AetherVpnService.EXTRA_NODE_UDP_PORT, node.udpPort)
+                putExtra(AetherVpnService.EXTRA_NODE_SNI_HOST, node.sniHost)
+                putExtra(AetherVpnService.EXTRA_NODE_SSH_KEY, node.sshPrivateKey)
+                putExtra(AetherVpnService.EXTRA_NODE_PROVIDER_NAME, node.providerName)
                 putExtra(AetherVpnService.EXTRA_IS_MANUAL_SELECTION, isManualSelection)
                 putExtra(AetherVpnService.EXTRA_DNS_SERVER, dnsServer)
             }
