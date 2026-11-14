@@ -1,7 +1,7 @@
 <resources>
     <string name="app_name">A VPN</string>
     <string name="tagline_open_source">Fast Worldwide Secure Tunnel</string>
-    <string name="made_by_ashir">Made with love by Ashir ♥️</string>
+    <string name="made_by_ashir">Developed by Ashir ♥️</string>
     <string name="status_disconnected">Not Connected</string>
     <string name="status_connecting">Igniting Secure Tunnel…</string>
     <string name="status_connected">Connected &amp; Protected</string>

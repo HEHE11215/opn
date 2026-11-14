@@ -630,5 +630,68 @@ class ExampleRobolectricTest {
         assertFalse(isDarkState.value)
         composeRule.onNodeWithText("Day").assertIsDisplayed()
     }
+
+    @Test
+    fun `connected server remains strictly locked and never auto switches when faster nodes appear`() = runBlocking {
+        val app = ApplicationProvider.getApplicationContext<android.app.Application>()
+        assertEquals("Developed by Ashir ♥️", app.getString(R.string.made_by_ashir))
+
+        val connectedGermanyNode = VpnNode(
+            id = "country-DE",
+            hostName = "203.0.113.10",
+            ipAddress = "203.0.113.10",
+            port = 1080,
+            countryName = "Germany",
+            countryCode = "DE",
+            cityName = "Frankfurt",
+            flagEmoji = "🇩🇪",
+            region = VpnRegion.EUROPE,
+            pingMs = 88,
+            downloadSpeedMbps = 120.0,
+            operatorName = "DE Relay",
+            isVerifiedWorking = true
+        )
+        val fasterSingaporeNode = VpnNode(
+            id = "country-SG",
+            hostName = "198.51.100.99",
+            ipAddress = "198.51.100.99",
+            port = 1080,
+            countryName = "Singapore",
+            countryCode = "SG",
+            cityName = "Singapore",
+            flagEmoji = "🇸🇬",
+            region = VpnRegion.ASIA_PACIFIC,
+            pingMs = 15,
+            downloadSpeedMbps = 250.0,
+            operatorName = "SG Relay",
+            isVerifiedWorking = true
+        )
+
+        // Lock telemetry as CONNECTED to Germany
+        AetherVpnStateBus.updateTelemetry {
+            TunnelTelemetry(
+                status = TunnelConnectionStatus.CONNECTED,
+                activeNode = connectedGermanyNode,
+                verifiedExitCountry = "Germany",
+                verifiedExitIp = "203.0.113.10"
+            )
+        }
+        // Even if the global node pool has a faster server (Singapore 15ms), the connected Germany server must stay locked
+        AetherVpnStateBus.updateNodePool(listOf(fasterSingaporeNode, connectedGermanyNode))
+
+        val viewModel = VpnViewModel(app)
+        val deadline = System.currentTimeMillis() + 3_000L
+        while (System.currentTimeMillis() < deadline) {
+            Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            if (viewModel.uiState.value.telemetry.status == TunnelConnectionStatus.CONNECTED) break
+            Thread.sleep(20L)
+        }
+
+        val currentSelected = viewModel.uiState.value.selectedNode
+        assertEquals("DE", currentSelected.countryCode)
+        assertEquals("203.0.113.10", currentSelected.ipAddress)
+        assertEquals("Germany", currentSelected.countryName)
+    }
 }
+
 

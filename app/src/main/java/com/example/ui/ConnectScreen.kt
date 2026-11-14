@@ -7,7 +7,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -33,7 +33,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.filled.BatterySaver
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.PowerSettingsNew
@@ -42,10 +41,8 @@ import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Upload
-import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
@@ -64,9 +61,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -87,8 +84,8 @@ import com.example.ui.theme.RoseAlert
 import java.util.Locale
 
 /**
- * Clean Material 3 App Logo container (`AnimatedGifStyleAVpnLogo`).
- * Zero gradients or continuous animations.
+ * Simple Material 3 Expressive "A VPN" Vector Shield + "A" Monogram Logo (`AnimatedGifStyleAVpnLogo`).
+ * Pure lightweight Canvas vector drawing (zero raster bitmap decoding, zero glass borders).
  */
 @Composable
 fun AnimatedGifStyleAVpnLogo(
@@ -96,23 +93,66 @@ fun AnimatedGifStyleAVpnLogo(
     cornerRadius: Dp = 12.dp,
     modifier: Modifier = Modifier
 ) {
+    val containerColor = MaterialTheme.colorScheme.primary
+    val shieldColor = MaterialTheme.colorScheme.primaryContainer
+    val monogramColor = MaterialTheme.colorScheme.primary
+
     Surface(
         shape = RoundedCornerShape(cornerRadius),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = modifier.size(size)
+        color = containerColor,
+        modifier = modifier
+            .size(size)
+            .semantics { contentDescription = "A VPN Material 3 Expressive Logo" }
     ) {
-        Image(
-            painter = painterResource(id = R.drawable.img_avpn_logo_1794127481273),
-            contentDescription = "A VPN Logo",
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize()
-        )
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val w = this.size.width
+            val h = this.size.height
+
+            // Material 3 Expressive Shield Silhouette
+            val shieldPath = Path().apply {
+                moveTo(w * 0.50f, h * 0.14f)
+                lineTo(w * 0.80f, h * 0.25f)
+                lineTo(w * 0.80f, h * 0.50f)
+                cubicTo(
+                    w * 0.80f, h * 0.70f,
+                    w * 0.67f, h * 0.83f,
+                    w * 0.50f, h * 0.88f
+                )
+                cubicTo(
+                    w * 0.33f, h * 0.83f,
+                    w * 0.20f, h * 0.70f,
+                    w * 0.20f, h * 0.50f
+                )
+                lineTo(w * 0.20f, h * 0.25f)
+                close()
+            }
+            drawPath(path = shieldPath, color = shieldColor)
+
+            // Geometric "A" Monogram with counter cutout
+            val aPath = Path().apply {
+                fillType = PathFillType.EvenOdd
+                moveTo(w * 0.50f, h * 0.29f)
+                lineTo(w * 0.33f, h * 0.69f)
+                lineTo(w * 0.42f, h * 0.69f)
+                lineTo(w * 0.455f, h * 0.59f)
+                lineTo(w * 0.545f, h * 0.59f)
+                lineTo(w * 0.58f, h * 0.69f)
+                lineTo(w * 0.67f, h * 0.69f)
+                close()
+
+                // Inner triangle counter
+                moveTo(w * 0.475f, h * 0.52f)
+                lineTo(w * 0.50f, h * 0.43f)
+                lineTo(w * 0.525f, h * 0.52f)
+                close()
+            }
+            drawPath(path = aPath, color = monogramColor)
+        }
     }
 }
 
 /**
- * Clean Material 3 Outlined Card (`M3SectionCard`) replacing the old frosted glass wrapper.
+ * Clean Material 3 Outlined Card (`M3SectionCard`).
  * Uses solid `MaterialTheme.colorScheme.surface` and `outlineVariant` for instant Day/Night switching.
  */
 @Composable
@@ -134,8 +174,8 @@ fun M3SectionCard(
 }
 
 /**
- * Clean Material 3 Connect Screen for **A VPN** with zero glass UI, zero unnecessary animations,
- * and seamless Day/Night theme adaptation.
+ * Clean Material 3 Connect Screen for **A VPN** with locked active server display,
+ * zero duplicate credit cards, and seamless Day/Night theme adaptation.
  */
 @Composable
 fun ConnectScreen(
@@ -252,7 +292,7 @@ fun ConnectScreen(
                                     )
                                     Spacer(modifier = Modifier.width(5.dp))
                                     Text(
-                                        text = "${displayNode.flagEmoji} $exitCountry • TUN0 Active",
+                                        text = "${displayNode.flagEmoji} $exitCountry • Locked",
                                         style = MaterialTheme.typography.titleMedium.copy(
                                             fontWeight = FontWeight.Bold
                                         ),
@@ -439,6 +479,7 @@ fun ConnectScreen(
             SelectedCountryCard(
                 node = displayNode,
                 isAutoMode = uiState.isAutoFastestMode,
+                isConnected = isConnected,
                 onOpenNodeList = onOpenNodeSelector
             )
         }
@@ -519,14 +560,6 @@ fun ConnectScreen(
                 latestSummary = uiState.telemetry.lastFailureStage
                     ?: uiState.telemetry.handshakeSummary.ifBlank { "Tap to inspect handshake logs" },
                 onClick = onOpenConnectionLogs
-            )
-        }
-
-        // 8. Developer Credits Banner ("Made with love by Ashir ♥️")
-        item {
-            DeveloperCreditsGlassBanner(
-                isDark = isDark,
-                onClick = onOpenDeveloperCredits
             )
         }
     }
@@ -912,85 +945,6 @@ private fun ConnectionLogShortcutCard(
 }
 
 @Composable
-fun DeveloperCreditsGlassBanner(
-    isDark: Boolean = false,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    M3SectionCard(
-        cornerRadius = 16.dp,
-        modifier = modifier
-            .fillMaxWidth()
-            .widthIn(max = 600.dp)
-            .clickable(onClick = onClick)
-            .testTag("developer_credits_card")
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f)
-            ) {
-                Surface(
-                    shape = CircleShape,
-                    color = RoseAlert.copy(alpha = 0.14f),
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Default.Favorite,
-                            contentDescription = null,
-                            tint = RoseAlert,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "Made with love by Ashir ♥️",
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                fontWeight = FontWeight.Bold
-                            ),
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Icon(
-                            imageVector = Icons.Default.Verified,
-                            contentDescription = "Verified Developer",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(15.dp)
-                        )
-                    }
-                    Text(
-                        text = "Creator & Lead Architect • Tap for Info",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
-                contentDescription = "Open Developer Credits",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(13.dp)
-            )
-        }
-    }
-}
-
-@Composable
 private fun RealtimeLiveIndicatorPill(
     isConnected: Boolean,
     isConnecting: Boolean,
@@ -1227,10 +1181,12 @@ fun FireConnectOrb(
 private fun SelectedCountryCard(
     node: VpnNode,
     isAutoMode: Boolean,
+    isConnected: Boolean,
     onOpenNodeList: () -> Unit
 ) {
     M3SectionCard(
         cornerRadius = 16.dp,
+        borderColor = if (isConnected) EmeraldConnected.copy(alpha = 0.5f) else MaterialTheme.colorScheme.outlineVariant,
         modifier = Modifier
             .fillMaxWidth()
             .widthIn(max = 600.dp)
@@ -1276,20 +1232,26 @@ private fun SelectedCountryCard(
 
                     Surface(
                         shape = RoundedCornerShape(6.dp),
-                        color = if (isAutoMode) {
+                        color = if (isConnected) {
+                            EmeraldConnected.copy(alpha = 0.14f)
+                        } else if (isAutoMode) {
                             MaterialTheme.colorScheme.primaryContainer
                         } else {
                             MaterialTheme.colorScheme.secondaryContainer
                         }
                     ) {
                         Text(
-                            text = if (isAutoMode) "Auto" else "Manual",
+                            text = when {
+                                isConnected -> "Locked"
+                                isAutoMode -> "Auto"
+                                else -> "Manual"
+                            },
                             style = MaterialTheme.typography.labelSmall.copy(
                                 fontWeight = FontWeight.Bold,
-                                color = if (isAutoMode) {
-                                    MaterialTheme.colorScheme.onPrimaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.onSecondaryContainer
+                                color = when {
+                                    isConnected -> EmeraldConnected
+                                    isAutoMode -> MaterialTheme.colorScheme.onPrimaryContainer
+                                    else -> MaterialTheme.colorScheme.onSecondaryContainer
                                 }
                             ),
                             maxLines = 1,

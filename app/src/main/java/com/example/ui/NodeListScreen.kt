@@ -395,15 +395,6 @@ fun NodeListScreen(
                     )
                 }
             }
-
-            item(key = "servers_developer_credits_footer") {
-                Spacer(modifier = Modifier.height(4.dp))
-                DeveloperCreditsGlassBanner(
-                    isDark = isDark,
-                    onClick = onOpenDeveloperCredits
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-            }
         }
     }
 }

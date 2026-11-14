@@ -62,7 +62,7 @@ data class VpnEventPopup(
     val subtitle: String,
     val flagEmoji: String = "🔥",
     val detailBadge: String = "Verified Exit Tunnel",
-    val badgeText: String = "Made by Ashir ♥️",
+    val badgeText: String = "Developed by Ashir ♥️",
     val tone: VpnPopupTone = VpnPopupTone.INFO
 )
 
@@ -100,7 +100,7 @@ private data class FilterBarState(
 )
 
 /**
- * MVVM ViewModel for **A VPN** (Crafted by Ashir ♥️) backed by strict TLS-verified remote relays
+ * MVVM ViewModel for **A VPN** (Developed by Ashir ♥️) backed by strict TLS-verified remote relays
  * and continuous real-time TCP round-trip ping monitoring.
  */
 class VpnViewModel(application: Application) : AndroidViewModel(application) {
@@ -136,13 +136,36 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         val isAutoMode = filter.isAutoFastestOverride
             ?: (prefs.autoSelectFastest && filter.manualSelectedNodeOverride == null)
 
-        val selected = if (!isAutoMode) {
+        // While CONNECTED or CONNECTING, strictly lock onto telemetry.activeNode so background ping scans never jump servers!
+        val activeConnectedNode = telemetry.activeNode?.takeIf {
+            (telemetry.status == TunnelConnectionStatus.CONNECTED ||
+                telemetry.status == TunnelConnectionStatus.CONNECTING) &&
+                it.ipAddress.isNotBlank()
+        }
+
+        val selected = if (activeConnectedNode != null) {
+            val latestPingMatch = nodes.firstOrNull {
+                it.ipAddress == activeConnectedNode.ipAddress && it.port == activeConnectedNode.port
+            }
+            if (latestPingMatch != null && latestPingMatch.pingMs > 0) {
+                activeConnectedNode.copy(pingMs = latestPingMatch.pingMs)
+            } else {
+                activeConnectedNode
+            }
+        } else if (!isAutoMode) {
             val manualOverride = filter.manualSelectedNodeOverride
             if (manualOverride != null) {
-                nodes.firstOrNull {
-                    it.id == manualOverride.id ||
-                        (it.ipAddress == manualOverride.ipAddress && it.port == manualOverride.port)
-                } ?: manualOverride
+                val exactMatch = nodes.firstOrNull {
+                    it.ipAddress == manualOverride.ipAddress && it.port == manualOverride.port
+                }
+                if (exactMatch != null) {
+                    manualOverride.copy(pingMs = exactMatch.pingMs)
+                } else {
+                    nodes.firstOrNull {
+                        it.id == manualOverride.id ||
+                            it.countryCode.equals(manualOverride.countryCode, ignoreCase = true)
+                    } ?: manualOverride
+                }
             } else {
                 nodes.firstOrNull {
                     it.id == prefs.selectedNodeId ||
@@ -194,11 +217,12 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         )
     }.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5_000),
+        started = SharingStarted.Eagerly,
         initialValue = VpnUiState(
             allNodes = emptyList(),
             filteredNodes = emptyList(),
-            selectedNode = repository.getInitialBootstrapNode(),
+            selectedNode = AetherVpnStateBus.telemetry.value.activeNode ?: repository.getInitialBootstrapNode(),
+            telemetry = AetherVpnStateBus.telemetry.value,
             isSyncingApi = true
         )
     )
@@ -289,7 +313,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                                     subtitle = "Verified Exit IP: $exitIp • ${node.cityName}",
                                     flagEmoji = node.flagEmoji,
                                     detailBadge = "⚡ $pingLabel • ${node.relayType.badgeLabel}",
-                                    badgeText = "Made with love by Ashir ♥️",
+                                    badgeText = "Developed by Ashir ♥️",
                                     tone = VpnPopupTone.CONNECTED
                                 )
                             }
@@ -302,10 +326,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                                 lastConnectedNodeKey = null
                                 showEventPopup(
                                     title = "VPN Disconnected",
-                                    subtitle = "Tunnel closed safely • Tap orb anytime to reconnect",
+                                    subtitle = "Tunnel closed safely • Tap button anytime to reconnect",
                                     flagEmoji = "🛡️",
                                     detailBadge = "Standby Mode",
-                                    badgeText = "Made with love by Ashir ♥️",
+                                    badgeText = "Developed by Ashir ♥️",
                                     tone = VpnPopupTone.DISCONNECTED
                                 )
                             }
@@ -318,7 +342,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                                 subtitle = tel.errorMessage ?: "Selected relay unreachable. Scan servers or add a custom proxy.",
                                 flagEmoji = "⚠️",
                                 detailBadge = "Zero-Leak Protection Active",
-                                badgeText = "Made with love by Ashir ♥️",
+                                badgeText = "Developed by Ashir ♥️",
                                 tone = VpnPopupTone.DISCONNECTED
                             )
                         }
@@ -326,33 +350,6 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                         else -> {}
                     }
                     lastObservedStatus = newStatus
-                }
-
-                // If live exit GeoIP check corrected the country/flag for the connected relay, sync _nodes & manual override
-                if (newStatus == TunnelConnectionStatus.CONNECTED && node != null) {
-                    val existingMatch = _nodes.value.firstOrNull {
-                        it.ipAddress == node.ipAddress && it.port == node.port
-                    }
-                    if (existingMatch != null && !existingMatch.countryCode.equals(node.countryCode, ignoreCase = true)) {
-                        val updatedList = _nodes.value.map { poolNode ->
-                            if (poolNode.ipAddress == node.ipAddress && poolNode.port == node.port) {
-                                node.copy(pingMs = if (node.pingMs > 0) node.pingMs else poolNode.pingMs)
-                            } else {
-                                poolNode
-                            }
-                        }
-                        val merged = repository.deduplicateFastestPerCountry(_customNodes.value + updatedList)
-                        _nodes.value = merged
-                        AetherVpnStateBus.updateNodePool(merged)
-                    }
-                    val currentManual = _filterState.value.manualSelectedNodeOverride
-                    if (currentManual != null &&
-                        currentManual.ipAddress == node.ipAddress &&
-                        currentManual.port == node.port &&
-                        !currentManual.countryCode.equals(node.countryCode, ignoreCase = true)
-                    ) {
-                        _filterState.update { it.copy(manualSelectedNodeOverride = node) }
-                    }
                 }
             }
         }
@@ -379,12 +376,14 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
 
                 val currentManual = _filterState.value.manualSelectedNodeOverride
                 if (currentManual != null) {
-                    val refreshedManual = merged.firstOrNull {
-                        it.id == currentManual.id ||
-                            (it.ipAddress == currentManual.ipAddress && it.port == currentManual.port)
+                    // Only update pingMs if the exact same IP:port was measured; never replace with a different relay!
+                    val exactManualMatch = updatedNodes.firstOrNull {
+                        it.ipAddress == currentManual.ipAddress && it.port == currentManual.port
                     }
-                    if (refreshedManual != null) {
-                        _filterState.update { it.copy(manualSelectedNodeOverride = refreshedManual) }
+                    if (exactManualMatch != null && exactManualMatch.pingMs > 0) {
+                        _filterState.update {
+                            it.copy(manualSelectedNodeOverride = currentManual.copy(pingMs = exactManualMatch.pingMs))
+                        }
                     }
                 }
             }
@@ -394,9 +393,9 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     fun showEventPopup(
         title: String,
         subtitle: String,
-        flagEmoji: String = "🔥",
+        flagEmoji: String = "🛡️",
         detailBadge: String = "Verified Exit Tunnel",
-        badgeText: String = "Made with love by Ashir ♥️",
+        badgeText: String = "Developed by Ashir ♥️",
         tone: VpnPopupTone = VpnPopupTone.INFO
     ) {
         _filterState.update {

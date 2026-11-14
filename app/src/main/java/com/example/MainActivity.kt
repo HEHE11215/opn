@@ -15,7 +15,16 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -40,15 +49,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Public
-import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Terminal
-import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.outlined.PowerSettingsNew
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Terminal
@@ -72,10 +78,17 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -107,11 +120,12 @@ import com.example.ui.theme.RoseAlert
 import com.example.vpn.AVpnQuickTileService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 
 /**
- * MainActivity for **A VPN** — Crafted with love by **Ashir ♥️**.
- * Simple Material 3 UI with instant startup, zero glass overlays, zero unnecessary animations,
- * and seamless Day/Night theme switching.
+ * MainActivity for **A VPN** — Developed by Ashir ♥️.
+ * Lightweight Material 3 Expressive UI with single-server lock, Material 3 Expressive
+ * motion-graphics startup intro, and instantaneous Day/Night theme switching.
  */
 class MainActivity : ComponentActivity() {
 
@@ -166,6 +180,14 @@ fun AVpnRootApp(
     val context = LocalContext.current
     var pendingNodeToConnect by remember { mutableStateOf<VpnNode?>(null) }
     var pendingIsManualSelection by remember { mutableStateOf(false) }
+
+    // Material 3 Expressive Motion-Graphics Startup Intro (shown once per cold launch, ~600ms)
+    var showStartupMotion by rememberSaveable { mutableStateOf(fastStartTrigger == 0L) }
+    LaunchedEffect(fastStartTrigger) {
+        if (fastStartTrigger > 0L) {
+            showStartupMotion = false
+        }
+    }
 
     val isDark = uiState.preferences.isDarkTheme
 
@@ -295,10 +317,10 @@ fun AVpnRootApp(
         }
     }
 
-    // Auto-dismiss event popup after 2.5 seconds
+    // Auto-dismiss event popup after 2.2 seconds
     LaunchedEffect(uiState.activePopup?.id) {
         if (uiState.activePopup != null) {
-            delay(2500L)
+            delay(2200L)
             viewModel.dismissPopup()
         }
     }
@@ -318,7 +340,7 @@ fun AVpnRootApp(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             AnimatedGifStyleAVpnLogo(
                                 size = 38.dp,
-                                cornerRadius = 10.dp
+                                cornerRadius = 11.dp
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Column {
@@ -332,52 +354,18 @@ fun AVpnRootApp(
                                     softWrap = false
                                 )
                                 Text(
-                                    text = "TUN0 • By Ashir ♥️",
+                                    text = stringResource(R.string.made_by_ashir),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
                                     softWrap = false,
-                                    overflow = TextOverflow.Ellipsis
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.testTag("developer_credit_once_label")
                                 )
                             }
                         }
                     },
                     actions = {
-                        // Material 3 "Ashir ♥️" Developer Pill
-                        Surface(
-                            onClick = { viewModel.setShowDeveloperCreditsModal(true) },
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                            modifier = Modifier
-                                .padding(end = 6.dp)
-                                .minimumInteractiveComponentSize()
-                                .testTag("topbar_ashir_credits_button")
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Favorite,
-                                    contentDescription = "Developer Credits",
-                                    tint = RoseAlert,
-                                    modifier = Modifier.size(13.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = "Ashir",
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 11.sp
-                                    ),
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                            }
-                        }
-
                         // Seamless Material 3 Day / Night Switch Button
                         MaterialDayNightToggle(
                             isDark = isDark,
@@ -478,9 +466,6 @@ fun AVpnRootApp(
                                 onOpenConnectionLogs = {
                                     viewModel.selectTab(AetherTab.LOGS)
                                 },
-                                onOpenDeveloperCredits = {
-                                    viewModel.setShowDeveloperCreditsModal(true)
-                                },
                                 onToggleWifiOnlyLatency = viewModel::setWifiOnlyLatencyCheck,
                                 onToggleAutoConnectOnStartup = viewModel::setAutoConnectOnStartup,
                                 onRequestAddQuickTile = requestAddQuickSettingsTile
@@ -506,8 +491,7 @@ fun AVpnRootApp(
                                 },
                                 onToggleFavorite = viewModel::toggleFavorite,
                                 onSyncPublicApi = { viewModel.syncLivePublicNodes(silent = false) },
-                                onOpenAddCustomModal = { viewModel.setShowAddCustomNodeModal(true) },
-                                onOpenDeveloperCredits = { viewModel.setShowDeveloperCreditsModal(true) }
+                                onOpenAddCustomModal = { viewModel.setShowAddCustomNodeModal(true) }
                             )
                         }
 
@@ -540,18 +524,11 @@ fun AVpnRootApp(
             }
         }
 
-        // Clean Material 3 Event Popup Dialog (direct conditional render, zero bounce/glass)
+        // Clean Material 3 Event Popup Dialog
         uiState.activePopup?.let { popup ->
             MaterialEventPopupDialog(
                 popup = popup,
                 onDismiss = viewModel::dismissPopup
-            )
-        }
-
-        // Clean Material 3 Developer Credits Dialog
-        if (uiState.showDeveloperCreditsModal) {
-            AshirDeveloperCreditsDialog(
-                onDismiss = { viewModel.setShowDeveloperCreditsModal(false) }
             )
         }
 
@@ -575,13 +552,190 @@ fun AVpnRootApp(
                 }
             )
         }
+
+        // Material 3 Expressive Motion-Graphics Startup Animation (plays once on cold start)
+        AnimatedVisibility(
+            visible = showStartupMotion,
+            exit = fadeOut(animationSpec = tween(220)) + scaleOut(
+                targetScale = 1.06f,
+                animationSpec = tween(220)
+            )
+        ) {
+            M3ExpressiveStartupMotionScreen(
+                onFinished = { showStartupMotion = false }
+            )
+        }
+    }
+}
+
+/**
+ * Simple Material 3 Expressive Motion-Graphics Startup Screen (`M3ExpressiveStartupMotionScreen`).
+ * Uses lightweight hardware-accelerated vector motion graphics (spring-physics morphing
+ * squircle/pill orbits + Material 3 Expressive "A" shield monogram + "Developed by Ashir ♥️").
+ * Automatically completes in ~580ms or immediately on tap.
+ */
+@Composable
+fun M3ExpressiveStartupMotionScreen(
+    onFinished: () -> Unit
+) {
+    val logoScale = remember { Animatable(0.68f) }
+    val ringProgress = remember { Animatable(0f) }
+    val contentAlpha = remember { Animatable(0f) }
+
+    LaunchedEffect(Unit) {
+        launch {
+            contentAlpha.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
+            )
+        }
+        launch {
+            logoScale.animateTo(
+                targetValue = 1f,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessMediumLow
+                )
+            )
+        }
+        launch {
+            ringProgress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing)
+            )
+        }
+        delay(560L)
+        onFinished()
+    }
+
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val primaryContainerColor = MaterialTheme.colorScheme.primaryContainer
+    val tertiaryColor = EmeraldConnected
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onFinished
+            )
+            .testTag("m3_expressive_startup_motion"),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier
+                .padding(24.dp)
+                .graphicsLayer {
+                    alpha = contentAlpha.value
+                }
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.size(168.dp)
+            ) {
+                // Material 3 Expressive Motion-Graphics Geometric Shapes
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val p = ringProgress.value
+                    val centerOffset = Offset(size.width / 2f, size.height / 2f)
+
+                    // Expressive outer morphing squircle wave
+                    val outerSize = size.minDimension * (0.64f + 0.34f * p)
+                    rotate(degrees = 18f * p, pivot = centerOffset) {
+                        drawRoundRect(
+                            color = primaryContainerColor.copy(alpha = (1f - p * 0.45f).coerceIn(0f, 1f)),
+                            topLeft = Offset(
+                                centerOffset.x - outerSize / 2f,
+                                centerOffset.y - outerSize / 2f
+                            ),
+                            size = Size(outerSize, outerSize),
+                            cornerRadius = CornerRadius(outerSize * 0.34f, outerSize * 0.34f)
+                        )
+                    }
+
+                    // Expressive secondary counter-rotating tonal frame
+                    val midSize = size.minDimension * (0.56f + 0.20f * p)
+                    rotate(degrees = -24f * p, pivot = centerOffset) {
+                        drawRoundRect(
+                            color = primaryColor.copy(alpha = 0.22f * p),
+                            topLeft = Offset(
+                                centerOffset.x - midSize / 2f,
+                                centerOffset.y - midSize / 2f
+                            ),
+                            size = Size(midSize, midSize),
+                            cornerRadius = CornerRadius(midSize * 0.30f, midSize * 0.30f),
+                            style = Stroke(width = 3.dp.toPx())
+                        )
+                    }
+
+                    // Expressive emerald status accent dots in diagonal orbit
+                    val orbitRadius = (size.minDimension * 0.44f) * p
+                    drawCircle(
+                        color = tertiaryColor.copy(alpha = 0.85f * p),
+                        radius = 5.dp.toPx() * p,
+                        center = Offset(
+                            centerOffset.x + orbitRadius * 0.72f,
+                            centerOffset.y - orbitRadius * 0.72f
+                        )
+                    )
+                    drawCircle(
+                        color = primaryColor.copy(alpha = 0.75f * p),
+                        radius = 4.dp.toPx() * p,
+                        center = Offset(
+                            centerOffset.x - orbitRadius * 0.72f,
+                            centerOffset.y + orbitRadius * 0.72f
+                        )
+                    )
+                }
+
+                Box(
+                    modifier = Modifier.graphicsLayer {
+                        scaleX = logoScale.value
+                        scaleY = logoScale.value
+                    }
+                ) {
+                    AnimatedGifStyleAVpnLogo(
+                        size = 86.dp,
+                        cornerRadius = 26.dp
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            Text(
+                text = stringResource(R.string.app_name),
+                style = MaterialTheme.typography.headlineMedium.copy(
+                    fontWeight = FontWeight.ExtraBold
+                ),
+                color = MaterialTheme.colorScheme.onBackground
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = MaterialTheme.colorScheme.primaryContainer
+            ) {
+                Text(
+                    text = stringResource(R.string.made_by_ashir),
+                    style = MaterialTheme.typography.labelLarge.copy(
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 5.dp)
+                )
+            }
+        }
     }
 }
 
 /**
  * Simple Material 3 Day / Night Switch button (`MaterialDayNightToggle`).
- * Switches between Day (Light) and Night (Dark) instantaneously without sliding thumbs,
- * rotating icons, or radial Canvas waves.
+ * Switches between Day (Light) and Night (Dark) instantaneously.
  */
 @Composable
 fun MaterialDayNightToggle(
@@ -675,7 +829,7 @@ private fun MaterialEventPopupDialog(
                 Box(contentAlignment = Alignment.BottomEnd) {
                     AnimatedGifStyleAVpnLogo(
                         size = 64.dp,
-                        cornerRadius = 16.dp
+                        cornerRadius = 18.dp
                     )
                     Surface(
                         shape = CircleShape,
@@ -729,33 +883,6 @@ private fun MaterialEventPopupDialog(
                     textAlign = TextAlign.Center
                 )
 
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Favorite,
-                            contentDescription = null,
-                            tint = RoseAlert,
-                            modifier = Modifier.size(12.dp)
-                        )
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(
-                            text = popup.badgeText,
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.Bold
-                            ),
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                }
-
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Button(
@@ -773,168 +900,6 @@ private fun MaterialEventPopupDialog(
                         style = MaterialTheme.typography.labelLarge.copy(
                             fontWeight = FontWeight.Bold,
                             color = Color.White,
-                            fontSize = 13.sp
-                        )
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * Clean Material 3 Developer Credits Dialog showcasing Ashir ♥️.
- */
-@Composable
-private fun AshirDeveloperCreditsDialog(
-    onDismiss: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.45f))
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onDismiss
-            )
-            .padding(horizontal = 22.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        M3SectionCard(
-            cornerRadius = 20.dp,
-            modifier = Modifier
-                .fillMaxWidth()
-                .widthIn(max = 370.dp)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = {}
-                )
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 22.dp, vertical = 22.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                AnimatedGifStyleAVpnLogo(
-                    size = 68.dp,
-                    cornerRadius = 16.dp
-                )
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "Created by Ashir ♥️",
-                        style = MaterialTheme.typography.headlineMedium.copy(
-                            fontWeight = FontWeight.Bold
-                        ),
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Icon(
-                        imageVector = Icons.Default.Verified,
-                        contentDescription = "Verified",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Text(
-                    text = "Founder & Lead Architect of A VPN",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Text(
-                    text = "Crafted with love by Ashir ♥️ to deliver native Wi-Fi speed tunnels, Quick Settings 1-tap controls, and a clean Material 3 Day & Night UI.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Security,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
-                            Text(
-                                text = "Wi-Fi Warp",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.Bold
-                                ),
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        }
-                    }
-
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.secondaryContainer,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Code,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
-                            Text(
-                                text = "By Ashir ♥️",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.Bold
-                                ),
-                                color = MaterialTheme.colorScheme.onSecondaryContainer
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Button(
-                    onClick = onDismiss,
-                    shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(42.dp)
-                        .testTag("close_developer_credits_button")
-                ) {
-                    Text(
-                        text = "Close",
-                        style = MaterialTheme.typography.labelLarge.copy(
-                            fontWeight = FontWeight.Bold,
                             fontSize = 13.sp
                         )
                     )

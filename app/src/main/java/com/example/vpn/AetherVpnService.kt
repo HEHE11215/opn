@@ -414,75 +414,19 @@ class AetherVpnService : VpnService() {
                     severity = VpnDiagnosticSeverity.INFO
                 )
 
-                // Confirm live public Exit IP & geo directly through the active local tunnel gateway
+                // Confirm live public Exit IP directly through the active local tunnel gateway without mutating the selected country
                 launch(Dispatchers.IO) {
                     val liveExit = LocalTunnelGateway.fetchExitIpThroughLocalGateway(
                         localPort = localPort,
                         fallbackNode = activeNode
                     )
-                    val resolvedCc = liveExit.countryCode.trim().uppercase(Locale.US)
-                    val hasValidCc = resolvedCc.length == 2 && resolvedCc != "XX"
-                    val effectiveCc = if (hasValidCc) resolvedCc else activeNode.countryCode
-                    val resolvedCountry = if (hasValidCc) {
-                        liveExit.countryName.ifEmpty { PublicNodeRepository.countryNameFromCode(effectiveCc) }
-                    } else {
-                        liveExit.countryName.ifEmpty { activeNode.countryName }
-                    }
-                    val resolvedCity = liveExit.cityName.ifEmpty { activeNode.cityName }
-                    val resolvedIsp = liveExit.ispName.ifEmpty { activeNode.operatorName }
                     val resolvedIp = liveExit.publicIp.ifEmpty { exitLabel }
-
-                    val countryChanged = hasValidCc && !effectiveCc.equals(activeNode.countryCode, ignoreCase = true)
-                    val correctedNode = activeNode.copy(
-                        id = if (activeNode.isCustomNode) activeNode.id else "country-$effectiveCc",
-                        countryCode = effectiveCc,
-                        countryName = resolvedCountry,
-                        cityName = resolvedCity,
-                        flagEmoji = PublicNodeRepository.countryCodeToFlagEmoji(effectiveCc),
-                        region = PublicNodeRepository.mapCountryCodeToRegion(effectiveCc),
-                        operatorName = resolvedIsp,
-                        verifiedExitIp = resolvedIp
-                    )
-
-                    if (gateway.primaryNode?.ipAddress == activeNode.ipAddress &&
-                        gateway.primaryNode?.port == activeNode.port
-                    ) {
-                        gateway.switchPrimaryNode(correctedNode, verifiedBackups)
-                    }
-
-                    if (countryChanged || resolvedIp != activeNode.verifiedExitIp) {
-                        val updatedBackups = AetherVpnStateBus.verifiedBackupPool.value.map { poolNode ->
-                            if (poolNode.ipAddress == correctedNode.ipAddress && poolNode.port == correctedNode.port) {
-                                correctedNode.copy(pingMs = poolNode.pingMs)
-                            } else {
-                                poolNode
-                            }
-                        }
-                        if (updatedBackups.isNotEmpty()) {
-                            AetherVpnStateBus.updateVerifiedBackupPool(updatedBackups)
-                        }
-                        val updatedPool = AetherVpnStateBus.nodePool.value.map { poolNode ->
-                            if (poolNode.ipAddress == correctedNode.ipAddress && poolNode.port == correctedNode.port) {
-                                correctedNode.copy(pingMs = poolNode.pingMs)
-                            } else {
-                                poolNode
-                            }
-                        }
-                        if (updatedPool.isNotEmpty()) {
-                            AetherVpnStateBus.updateNodePool(updatedPool)
-                        }
-                    }
+                    val resolvedIsp = liveExit.ispName.ifEmpty { activeNode.operatorName }
 
                     AetherVpnStateBus.updateTelemetry { current ->
                         if (current.status == TunnelConnectionStatus.CONNECTED) {
-                            val currentActive = current.activeNode
-                            val isSameRelay = currentActive == null ||
-                                (currentActive.ipAddress == correctedNode.ipAddress && currentActive.port == correctedNode.port)
                             current.copy(
-                                activeNode = if (isSameRelay) correctedNode else currentActive,
                                 verifiedExitIp = resolvedIp,
-                                verifiedExitCountry = resolvedCountry,
-                                verifiedExitCity = resolvedCity,
                                 verifiedExitIsp = resolvedIsp
                             )
                         } else {
@@ -737,12 +681,12 @@ class AetherVpnService : VpnService() {
                 }
             }
 
-            // Every 8 seconds measure genuine TCP handshake duration; auto-switch smoothly if active relay stalls 2x
-            if (elapsedSec % 8L == 0L) {
+            // Every 10 seconds measure genuine TCP handshake latency on the connected server (never auto-switches servers!)
+            if (elapsedSec % 10L == 0L) {
                 val realPing = LocalTunnelGateway.measureTcpHandshakeDurationMs(
                     ipOrHost = liveCurrentNode.ipAddress,
                     port = liveCurrentNode.port,
-                    timeoutMs = 2000,
+                    timeoutMs = 2200,
                     protectSocket = protectSocketFn
                 )
                 if (realPing != null) {
@@ -756,60 +700,16 @@ class AetherVpnService : VpnService() {
                         }
                     }
                     AetherVpnStateBus.updateNodePool(updatedPool)
-                } else if (!liveCurrentNode.isCustomNode) {
+                } else {
                     consecutiveHealthMisses++
-                    if (consecutiveHealthMisses >= 2) {
-                        val candidateBackups = (AetherVpnStateBus.verifiedBackupPool.value + AetherVpnStateBus.nodePool.value)
-                            .filter {
-                                it.isVerifiedWorking &&
-                                    it.ipAddress.isNotBlank() &&
-                                    (it.ipAddress != liveCurrentNode.ipAddress || it.port != liveCurrentNode.port)
-                            }
-                            .distinctBy { "${it.ipAddress}:${it.port}" }
-                            .sortedWith(
-                                compareByDescending<VpnNode> {
-                                    it.countryCode.equals(liveCurrentNode.countryCode, ignoreCase = true)
-                                }.thenBy { if (it.pingMs > 0) it.pingMs else Int.MAX_VALUE }
-                            )
-                            .take(5)
-
-                        val directIp = AetherVpnStateBus.telemetry.value.deviceDirectIp
-                        val switchRace = raceVerifyFirst(
-                            candidates = candidateBackups,
-                            deviceDirectIp = directIp,
-                            timeoutMs = 3500
+                    if (consecutiveHealthMisses == 3) {
+                        AetherVpnStateBus.recordDiagnostic(
+                            phase = "Health Check",
+                            serverLabel = formatNodeLabel(liveCurrentNode),
+                            summary = "High latency on connected relay",
+                            detail = "Keeping ${liveCurrentNode.countryName} locked; tap Fast Switch if you want to change servers.",
+                            severity = VpnDiagnosticSeverity.WARNING
                         )
-                        val switched = switchRace.winner
-                        if (switched != null) {
-                            AetherVpnStateBus.recordDiagnostic(
-                                phase = "Auto-Failover",
-                                serverLabel = formatNodeLabel(switched),
-                                summary = "Promoted ${switched.flagEmoji} ${switched.countryName} (${switched.pingMs} ms)",
-                                detail = "Previous relay ${liveCurrentNode.ipAddress}:${liveCurrentNode.port} missed 2 consecutive health checks.",
-                                severity = VpnDiagnosticSeverity.WARNING
-                            )
-                            consecutiveHealthMisses = 0
-                            liveCurrentNode = switched
-                            gateway.switchPrimaryNode(switched, candidateBackups)
-                            AetherVpnStateBus.updateTelemetry { cur ->
-                                cur.copy(
-                                    activeNode = switched,
-                                    verifiedExitIp = switched.verifiedExitIp.ifEmpty { switched.ipAddress },
-                                    verifiedExitCountry = switched.countryName,
-                                    verifiedExitCity = switched.cityName,
-                                    verifiedExitIsp = switched.operatorName,
-                                    handshakeSummary = "Auto-switched to ${switched.flagEmoji} ${switched.countryName}"
-                                )
-                            }
-                        } else {
-                            AetherVpnStateBus.recordDiagnostic(
-                                phase = switchRace.failureStage ?: "Health Check Missed",
-                                serverLabel = formatNodeLabel(liveCurrentNode),
-                                summary = "Relay unresponsive (${consecutiveHealthMisses}x misses)",
-                                detail = switchRace.failureDetail ?: "No backup relay succeeded health probe yet.",
-                                severity = VpnDiagnosticSeverity.WARNING
-                            )
-                        }
                     }
                 }
             }

@@ -1,8 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item
-        android:width="66dp"
-        android:height="66dp"
-        android:drawable="@drawable/img_avpn_logo_1794127481273"
-        android:gravity="center" />
-</layer-list>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Material 3 Expressive Shield Container -->
+    <path
+        android:fillColor="#E0F2FE"
+        android:pathData="M54,22 L80,32 L80,53 C80,71 69,83 54,88 C39,83 28,71 28,53 L28,32 Z" />
+
+    <!-- Bold Geometric "A" Monogram Inside Shield -->
+    <path
+        android:fillColor="#0284C7"
+        android:pathData="M54,34 L38,72 L46,72 L49.5,63 L58.5,63 L62,72 L70,72 L54,34 Z M51.8,56 L54,49.5 L56.2,56 Z" />
+</vector>

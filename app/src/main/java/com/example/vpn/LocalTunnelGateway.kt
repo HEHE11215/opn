@@ -165,19 +165,19 @@ class LocalTunnelGateway(
     }
 
     /**
-     * Opens an upstream TCP tunnel socket STRICTLY through the active verified remote exit server
-     * (or verified remote backup relays). Used by BOTH HTTP proxy clients and [TunPacketEngine] (`tun0`).
-     * Automatically fails over to working backups when the active server stalls or goes offline.
+     * Opens an upstream TCP tunnel socket STRICTLY through the active verified remote exit server.
+     * Important: Individual connection timeouts (e.g. a single blocked port or slow website) NEVER
+     * overwrite [primaryNode] or switch the user's connected server/country!
      */
     fun openRemoteTunnelSocket(targetHost: String, targetPort: Int): Socket? {
         val currentPrimary = primaryNode ?: return null
 
-        // 1. Attempt the active primary exit server with a crisp timeout so stalled servers fail over quickly
+        // 1. Primary attempt on the connected server with generous timeout so active sessions stay locked
         val primarySock = connectViaRelayNode(
             node = currentPrimary,
             targetHost = targetHost,
             targetPort = targetPort,
-            timeoutMs = 2400,
+            timeoutMs = 3800,
             protectSocket = protectSocketFn,
             protectDatagram = protectDatagramFn
         )
@@ -185,87 +185,53 @@ class LocalTunnelGateway(
             return primarySock
         }
 
-        // Custom private credentials server: do not silently jump to random public relays
+        // 2. Quick second retry on the exact same connected server before giving up on this socket
+        val retryPrimarySock = connectViaRelayNode(
+            node = currentPrimary,
+            targetHost = targetHost,
+            targetPort = targetPort,
+            timeoutMs = 2800,
+            protectSocket = protectSocketFn,
+            protectDatagram = protectDatagramFn
+        )
+        if (retryPrimarySock != null) {
+            return retryPrimarySock
+        }
+
+        // Custom private credentials server: do not fall back to public pool
         if (currentPrimary.isCustomNode) {
             return null
         }
 
-        val combinedPool = (fallbackVerifiedNodes +
+        // 3. Optional same-country backup assist for this single socket ONLY (never mutates primaryNode or switches country!)
+        val sameCountryBackups = (fallbackVerifiedNodes +
             AetherVpnStateBus.verifiedBackupPool.value +
             AetherVpnStateBus.nodePool.value)
             .filter {
                 it.isVerifiedWorking &&
                     it.ipAddress.isNotBlank() &&
+                    it.countryCode.equals(currentPrimary.countryCode, ignoreCase = true) &&
                     (it.ipAddress != currentPrimary.ipAddress || it.port != currentPrimary.port)
             }
             .distinctBy { "${it.ipAddress}:${it.port}" }
-
-        // 2. Fail over first to verified backup servers in the SAME country
-        val sameCountryBackups = combinedPool
-            .filter { it.countryCode.equals(currentPrimary.countryCode, ignoreCase = true) }
             .sortedBy { if (it.pingMs > 0) it.pingMs else Int.MAX_VALUE }
-            .take(3)
+            .take(2)
 
         for (backup in sameCountryBackups) {
             val sock = connectViaRelayNode(
                 node = backup,
                 targetHost = targetHost,
                 targetPort = targetPort,
-                timeoutMs = 2200,
+                timeoutMs = 2500,
                 protectSocket = protectSocketFn,
                 protectDatagram = protectDatagramFn
             )
             if (sock != null) {
-                promoteActiveNodeSilently(backup)
-                return sock
-            }
-        }
-
-        // 3. Smooth global failover if the active node/country stalled so user connection never gets stuck
-        val globalVerifiedBackups = combinedPool
-            .filter { !it.countryCode.equals(currentPrimary.countryCode, ignoreCase = true) }
-            .sortedBy { if (it.pingMs > 0) it.pingMs else Int.MAX_VALUE }
-            .take(3)
-
-        for (backup in globalVerifiedBackups) {
-            val sock = connectViaRelayNode(
-                node = backup,
-                targetHost = targetHost,
-                targetPort = targetPort,
-                timeoutMs = 2200,
-                protectSocket = protectSocketFn,
-                protectDatagram = protectDatagramFn
-            )
-            if (sock != null) {
-                promoteActiveNodeSilently(backup)
                 return sock
             }
         }
 
         return null
-    }
-
-    private fun promoteActiveNodeSilently(newNode: VpnNode) {
-        val previous = primaryNode
-        primaryNode = newNode
-        if (previous != null && (previous.ipAddress != newNode.ipAddress || previous.port != newNode.port)) {
-            AetherVpnStateBus.recordDiagnostic(
-                phase = "Live Failover",
-                serverLabel = "${previous.flagEmoji} ${previous.countryName} (${previous.ipAddress}:${previous.port})",
-                summary = "Switched to ${newNode.flagEmoji} ${newNode.countryName}",
-                detail = "Active relay stalled on live traffic; traffic migrated smoothly to ${newNode.ipAddress}:${newNode.port} (${newNode.relayType.badgeLabel})",
-                severity = VpnDiagnosticSeverity.WARNING
-            )
-        }
-        AetherVpnStateBus.updateTelemetry { tel ->
-            tel.copy(
-                activeNode = newNode,
-                verifiedExitIp = newNode.verifiedExitIp.ifEmpty { newNode.ipAddress },
-                verifiedExitCountry = newNode.countryName,
-                verifiedExitCity = newNode.cityName,
-                handshakeSummary = "Switched smoothly to ${newNode.flagEmoji} ${newNode.countryName}"
-            )
-        }
     }
 
     private suspend fun handleClientConnection(client: Socket) = withContext(Dispatchers.IO) {
