@@ -8,7 +8,6 @@ import android.os.Build
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import com.example.MainActivity
-import com.example.data.PublicNodeRepository
 import com.example.model.TunnelConnectionStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -53,7 +52,11 @@ class AVpnQuickTileService : TileService() {
             val stopIntent = Intent(this, AetherVpnService::class.java).apply {
                 action = AetherVpnService.ACTION_DISCONNECT
             }
-            startService(stopIntent)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(stopIntent)
+            } else {
+                startService(stopIntent)
+            }
             updateTileUi(
                 state = Tile.STATE_INACTIVE,
                 label = "A VPN",
@@ -68,11 +71,11 @@ class AVpnQuickTileService : TileService() {
             null
         }
 
-        if (prepareIntent == null) {
-            val repo = PublicNodeRepository(applicationContext)
-            val bestNode = AetherVpnStateBus.nodePool.value.minByOrNull { it.pingMs }
-                ?: repo.getVerifiedCommunityNodes().first()
+        val bestNode = AetherVpnStateBus.nodePool.value
+            .filter { it.isVerifiedWorking && it.ipAddress.isNotBlank() }
+            .minByOrNull { if (it.pingMs > 0) it.pingMs else Int.MAX_VALUE }
 
+        if (prepareIntent == null && bestNode != null) {
             val connectIntent = Intent(this, AetherVpnService::class.java).apply {
                 action = AetherVpnService.ACTION_CONNECT
                 putExtra(AetherVpnService.EXTRA_NODE_ID, bestNode.id)
@@ -87,7 +90,11 @@ class AVpnQuickTileService : TileService() {
                 putExtra(AetherVpnService.EXTRA_NODE_OPERATOR, bestNode.operatorName)
                 putExtra(AetherVpnService.EXTRA_NODE_PROTOCOL, bestNode.protocol.name)
                 putExtra(AetherVpnService.EXTRA_NODE_RELAY_TYPE, bestNode.relayType.name)
-                putExtra(AetherVpnService.EXTRA_NODE_VERIFIED, true)
+                putExtra(AetherVpnService.EXTRA_NODE_USERNAME, bestNode.username)
+                putExtra(AetherVpnService.EXTRA_NODE_PASSWORD, bestNode.password)
+                putExtra(AetherVpnService.EXTRA_NODE_EXIT_IP, bestNode.verifiedExitIp)
+                putExtra(AetherVpnService.EXTRA_NODE_VERIFIED, bestNode.isVerifiedWorking)
+                putExtra(AetherVpnService.EXTRA_NODE_IS_CUSTOM, bestNode.isCustomNode)
                 putExtra(AetherVpnService.EXTRA_IS_MANUAL_SELECTION, false)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -95,10 +102,11 @@ class AVpnQuickTileService : TileService() {
             } else {
                 startService(connectIntent)
             }
+            val pingText = if (bestNode.pingMs > 0) "${bestNode.pingMs} ms" else "Live"
             updateTileUi(
                 state = Tile.STATE_ACTIVE,
                 label = "A VPN • ${bestNode.countryCode}",
-                subtitle = "${bestNode.flagEmoji} ${bestNode.pingMs} ms"
+                subtitle = "${bestNode.flagEmoji} $pingText"
             )
         } else {
             val activityIntent = Intent(this, MainActivity::class.java).apply {
@@ -127,11 +135,11 @@ class AVpnQuickTileService : TileService() {
             TunnelConnectionStatus.CONNECTED -> {
                 val countryCode = node?.countryCode ?: "ON"
                 val flag = node?.flagEmoji ?: "🔥"
-                val ping = node?.pingMs ?: 12
+                val pingText = if ((node?.pingMs ?: -1) > 0) "${node?.pingMs} ms" else "Live"
                 updateTileUi(
                     state = Tile.STATE_ACTIVE,
                     label = "A VPN • $countryCode",
-                    subtitle = "$flag $ping ms Live"
+                    subtitle = "$flag $pingText Live"
                 )
             }
 
@@ -139,7 +147,7 @@ class AVpnQuickTileService : TileService() {
                 updateTileUi(
                     state = Tile.STATE_ACTIVE,
                     label = "A VPN • Sync",
-                    subtitle = "Connecting…"
+                    subtitle = "Verifying…"
                 )
             }
 

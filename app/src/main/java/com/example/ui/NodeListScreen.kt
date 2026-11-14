@@ -168,7 +168,7 @@ fun NodeListScreen(
                 ) {
                     Row(
                         modifier = Modifier
-                            .padding(horizontal = 12.dp)
+                            .padding(horizontal = 14.dp)
                             .height(48.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
@@ -179,15 +179,16 @@ fun NodeListScreen(
                             tint = if (isPingAsc) EmeraldConnected else FireAccent,
                             modifier = Modifier.size(15.dp)
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             text = if (isPingAsc) "Ping ↑" else "Ping ↓",
                             style = MaterialTheme.typography.labelLarge.copy(
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp
+                                fontSize = 11.5.sp
                             ),
                             color = if (isPingAsc) EmeraldConnected else FireAccent,
-                            maxLines = 1
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
                 }
@@ -311,7 +312,7 @@ fun NodeListScreen(
                             text = sortOpt.label,
                             style = MaterialTheme.typography.labelSmall.copy(
                                 fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
-                                fontSize = 11.sp
+                                fontSize = 11.5.sp
                             ),
                             color = if (active) {
                                 SkyBluePrimary
@@ -319,7 +320,8 @@ fun NodeListScreen(
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             },
                             maxLines = 1,
-                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp)
+                            softWrap = false,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
                         )
                     }
                 }
@@ -353,21 +355,67 @@ fun NodeListScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(36.dp),
+                            .padding(28.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(
-                                imageVector = Icons.Default.Public,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(40.dp)
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = "No matching countries",
-                                style = MaterialTheme.typography.titleMedium
-                            )
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            if (uiState.isSyncingApi) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(36.dp),
+                                    strokeWidth = 3.dp,
+                                    color = SkyBluePrimary
+                                )
+                                Text(
+                                    text = "Testing Live Relays (TCP + TLS Exit IP)…",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Public,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(40.dp)
+                                )
+                                Text(
+                                    text = if (uiState.allNodes.isEmpty()) {
+                                        "No live public relays passed TLS verification"
+                                    } else {
+                                        "No matching countries"
+                                    },
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Button(
+                                        onClick = onSyncPublicApi,
+                                        colors = ButtonDefaults.buttonColors(containerColor = SkyBluePrimary),
+                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Text(
+                                            text = "Scan Relays",
+                                            color = Color.White,
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
+                                    }
+                                    Button(
+                                        onClick = onOpenAddCustomModal,
+                                        colors = ButtonDefaults.buttonColors(containerColor = FireAccent),
+                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Text(
+                                            text = "+ Custom",
+                                            color = Color.White,
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -454,7 +502,7 @@ private fun AutoFastestLocationCard(
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Fastest Wi-Fi Tunnel",
+                    text = "Auto Fastest Verified",
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.Bold
                     ),
@@ -462,8 +510,9 @@ private fun AutoFastestLocationCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.height(2.dp))
+                val fastPingText = if (fastestNode.pingMs > 0) "${fastestNode.pingMs} ms" else "Scanning…"
                 Text(
-                    text = "${fastestNode.flagEmoji} ${fastestNode.countryName} • ⚡ ${fastestNode.pingMs} ms",
+                    text = "${fastestNode.flagEmoji} ${fastestNode.countryName} • ⚡ $fastPingText",
                     style = MaterialTheme.typography.bodyMedium,
                     color = EmeraldConnected,
                     maxLines = 1,
@@ -476,21 +525,23 @@ private fun AutoFastestLocationCard(
             Button(
                 onClick = onClick,
                 shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (isSelected) EmeraldConnected else SkyBluePrimary
                 ),
                 modifier = Modifier
                     .padding(start = 4.dp)
-                    .height(34.dp)
+                    .height(38.dp)
             ) {
                 Text(
                     text = if (isSelected) "Active" else "Auto ⚡",
                     style = MaterialTheme.typography.labelLarge.copy(
                         color = Color.White,
-                        fontSize = 11.sp
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp
                     ),
-                    maxLines = 1
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
         }
@@ -559,7 +610,7 @@ private fun CountryServerRowCard(
                         color = latencyColor(node.pingMs)
                     )
                     Text(
-                        text = "${node.pingMs} ms",
+                        text = if (node.pingMs > 0) "${node.pingMs} ms" else "Offline",
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontFamily = JetBrainsMonoFontFamily,
                             fontWeight = FontWeight.Bold
@@ -567,8 +618,13 @@ private fun CountryServerRowCard(
                         color = latencyColor(node.pingMs),
                         maxLines = 1
                     )
+                    val metaLabel = if (node.verifiedExitIp.isNotEmpty()) {
+                        "• ${node.relayType.badgeLabel} • ${node.verifiedExitIp}"
+                    } else {
+                        "• ${node.cityName} • ${node.relayType.badgeLabel}"
+                    }
                     Text(
-                        text = "• ${node.cityName}",
+                        text = metaLabel,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -594,16 +650,16 @@ private fun CountryServerRowCard(
 
             Spacer(modifier = Modifier.width(6.dp))
 
-            // 4. Compact Glass Pill Button with short label ("Use" / "Active") & clean padding
+            // 4. Compact Pill Button with balanced padding & crisp single-line label
             Button(
                 onClick = onSelectNode,
                 shape = RoundedCornerShape(11.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 5.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (isSelected) FireAccent else SkyBluePrimary
                 ),
                 modifier = Modifier
-                    .height(34.dp)
+                    .height(38.dp)
                     .testTag("select_node_${node.id}")
             ) {
                 if (isSelected) {
@@ -611,32 +667,36 @@ private fun CountryServerRowCard(
                         imageVector = Icons.Default.LocalFireDepartment,
                         contentDescription = null,
                         tint = Color.White,
-                        modifier = Modifier.size(13.dp)
+                        modifier = Modifier.size(14.dp)
                     )
-                    Spacer(modifier = Modifier.width(4.dp))
+                    Spacer(modifier = Modifier.width(5.dp))
                     Text(
                         text = "Active",
                         style = MaterialTheme.typography.labelLarge.copy(
                             color = Color.White,
-                            fontSize = 11.sp
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
                         ),
-                        maxLines = 1
+                        maxLines = 1,
+                        softWrap = false
                     )
                 } else {
                     Icon(
                         imageVector = Icons.Default.Check,
                         contentDescription = null,
                         tint = Color.White,
-                        modifier = Modifier.size(13.dp)
+                        modifier = Modifier.size(14.dp)
                     )
-                    Spacer(modifier = Modifier.width(4.dp))
+                    Spacer(modifier = Modifier.width(5.dp))
                     Text(
                         text = "Use",
                         style = MaterialTheme.typography.labelLarge.copy(
                             color = Color.White,
-                            fontSize = 11.sp
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
                         ),
-                        maxLines = 1
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
             }

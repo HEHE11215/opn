@@ -1,7 +1,7 @@
 package com.example.model
 
 /**
- * Geographic region filter categories for worldwide free VPN relay nodes.
+ * Geographic region filter categories for worldwide VPN exit relays.
  */
 enum class VpnRegion(val displayName: String) {
     ALL("All Countries"),
@@ -13,8 +13,8 @@ enum class VpnRegion(val displayName: String) {
 }
 
 /**
- * Underlying wire protocol used by the local tunnel gateway to forward traffic
- * through the remote public relay node.
+ * Underlying wire protocol used by [com.example.vpn.LocalTunnelGateway] and
+ * [com.example.vpn.TunPacketEngine] to tunnel traffic through the remote exit server.
  */
 enum class RelayTunnelType(val badgeLabel: String) {
     SOCKS5("SOCKS5 TLS"),
@@ -23,7 +23,7 @@ enum class RelayTunnelType(val badgeLabel: String) {
 }
 
 /**
- * Supported open-source tunnel encapsulation and cipher suites.
+ * Tunnel mode label shown in preferences and telemetry.
  */
 enum class VpnProtocol(
     val shortName: String,
@@ -33,20 +33,20 @@ enum class VpnProtocol(
 ) {
     WIREGUARD_CHACHA20(
         shortName = "Smart Auto",
-        fullName = "Auto TLS-Verified Tunnel",
-        cipherDescription = "Strict CA TLS Verification • Anti-MITM • Remote DNS",
+        fullName = "TLS-Verified VpnService Tunnel",
+        cipherDescription = "Full TUN0 Capture • Strict CA TLS Check • Remote Exit IP",
         defaultPort = 1080
     ),
     OPENVPN_UDP_AES256(
-        shortName = "SOCKS5 Fast",
-        fullName = "SOCKS5 Direct Stream",
-        cipherDescription = "Zero-Interception Raw TCP Stream",
+        shortName = "SOCKS5 Tunnel",
+        fullName = "SOCKS5 Full-Route Stream",
+        cipherDescription = "RFC 1928/1929 TUN0 Bridge",
         defaultPort = 1080
     ),
     OPENVPN_TCP_TLS(
-        shortName = "Stealth 443",
-        fullName = "TCP Port 443 Firewall Bypass",
-        cipherDescription = "TLS 1.3 Verified Passthrough",
+        shortName = "HTTPS Tunnel",
+        fullName = "HTTP CONNECT Port 443",
+        cipherDescription = "TLS Passthrough via Port 443",
         defaultPort = 443
     )
 }
@@ -62,7 +62,7 @@ enum class NodeSortOption(val label: String) {
 }
 
 /**
- * Represents the best auto-selected free VPN server / ultra-fast tunnel for a specific country.
+ * Represents a strictly TLS-verified VPN relay node or user-configured Pro/Custom server.
  */
 data class VpnNode(
     val id: String,
@@ -76,41 +76,28 @@ data class VpnNode(
     val region: VpnRegion,
     val pingMs: Int,
     val downloadSpeedMbps: Double,
-    val activeSessions: Int,
-    val uptimeHours: Int,
     val operatorName: String,
     val protocol: VpnProtocol = VpnProtocol.WIREGUARD_CHACHA20,
     val relayType: RelayTunnelType = RelayTunnelType.SOCKS5,
-    val openVpnConfigPreview: String = "",
+    val username: String = "",
+    val password: String = "",
+    val verifiedExitIp: String = "",
     val isLiveFromPublicApi: Boolean = false,
     val isVerifiedWorking: Boolean = false,
     val isCustomNode: Boolean = false
 ) {
-    /**
-     * Consumer-friendly speed/quality rating based on latency.
-     */
-    val latencyQualityLabel: String
-        get() = when {
-            pingMs < 45 -> "Ultra-Fast Tunnel"
-            pingMs < 95 -> "Fast Verified Tunnel"
-            else -> "Verified Tunnel"
-        }
-
-    /**
-     * Returns 1..4 signal bars based on latency.
-     */
     val signalBars: Int
         get() = when {
-            pingMs <= 0 -> 4
-            pingMs < 55 -> 4
-            pingMs < 110 -> 3
-            pingMs < 180 -> 2
+            pingMs <= 0 -> 2
+            pingMs < 110 -> 4
+            pingMs < 200 -> 3
+            pingMs < 350 -> 2
             else -> 1
         }
 }
 
 /**
- * Lifecycle state of the Android VpnService encrypted tunnel.
+ * Lifecycle state of the Android [android.net.VpnService] tunnel.
  */
 enum class TunnelConnectionStatus {
     DISCONNECTED,
@@ -121,7 +108,7 @@ enum class TunnelConnectionStatus {
 }
 
 /**
- * Result of verifying the real public Exit IP through the active tunnel gateway.
+ * Result of verifying the real public Exit IP through the active tunnel.
  */
 data class ExitIpVerification(
     val publicIp: String,
@@ -129,6 +116,29 @@ data class ExitIpVerification(
     val countryCode: String,
     val cityName: String,
     val ispName: String
+)
+
+/**
+ * Severity level for [VpnDiagnosticEntry] captured by [com.example.vpn.AetherVpnService].
+ */
+enum class VpnDiagnosticSeverity {
+    INFO,
+    SUCCESS,
+    WARNING,
+    ERROR
+}
+
+/**
+ * Structured handshake, tunnel, or connection error entry captured from [com.example.vpn.AetherVpnService].
+ */
+data class VpnDiagnosticEntry(
+    val id: Long = System.nanoTime(),
+    val timestampEpochMs: Long = System.currentTimeMillis(),
+    val phase: String,
+    val serverLabel: String,
+    val summary: String,
+    val detail: String,
+    val severity: VpnDiagnosticSeverity
 )
 
 /**
@@ -145,6 +155,7 @@ data class TunnelTelemetry(
     val uploadRateKbps: Double = 0.0,
     val packetsProcessed: Long = 0L,
     val virtualIpAddress: String = "10.8.0.2",
+    val deviceDirectIp: String? = null,
     val verifiedExitIp: String? = null,
     val verifiedExitCountry: String? = null,
     val verifiedExitCity: String? = null,
@@ -153,19 +164,13 @@ data class TunnelTelemetry(
     val activeDnsServer: String = "1.1.1.1",
     val activeMtu: Int = 1400,
     val activeProtocol: VpnProtocol = VpnProtocol.WIREGUARD_CHACHA20,
-    val handshakeSummary: String = "Ready for Auto-Connect",
-    val errorMessage: String? = null
-)
-
-/**
- * Open-source transparency audit log entry.
- */
-data class AuditLogEntry(
-    val id: Long,
-    val timestampFormatted: String,
-    val tag: String,
-    val message: String,
-    val isHighlight: Boolean = false
+    val isForegroundServiceActive: Boolean = false,
+    val handshakeSummary: String = "Ready to Connect",
+    val errorMessage: String? = null,
+    val lastFailureStage: String? = null,
+    val lastFailureReason: String? = null,
+    val lastFailedServerLabel: String? = null,
+    val diagnosticLogs: List<VpnDiagnosticEntry> = emptyList()
 )
 
 /**
@@ -177,7 +182,6 @@ data class VpnPreferences(
     val favoriteNodeIds: Set<String> = setOf("US", "DE", "JP", "SG"),
     val preferredProtocol: VpnProtocol = VpnProtocol.WIREGUARD_CHACHA20,
     val dnsServer: String = "1.1.1.1",
-    val safeSplitTunnelMode: Boolean = false,
-    val autoReconnect: Boolean = true,
-    val isDarkTheme: Boolean = false
+    val isDarkTheme: Boolean = false,
+    val wifiOnlyLatencyCheck: Boolean = false
 )

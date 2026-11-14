@@ -17,4 +17,7 @@
     <string name="shortcut_fast_connect_short">Fast Connect</string>
     <string name="shortcut_fast_connect_long">1-Tap Fast Connect A VPN</string>
     <string name="qs_tile_label">A VPN</string>
+    <string name="battery_opt_title">Battery Optimization</string>
+    <string name="battery_opt_subtitle_wifi">WorkManager checks latency on Wi-Fi only</string>
+    <string name="battery_opt_subtitle_all">Checks latency on Wi-Fi &amp; mobile data</string>
 </resources>

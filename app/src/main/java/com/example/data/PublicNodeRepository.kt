@@ -21,34 +21,41 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
-import java.net.InetSocketAddress
 import java.net.Socket
+import java.util.Collections
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
-import kotlin.math.roundToInt
 
 private val Context.vpnDataStore: DataStore<Preferences> by preferencesDataStore(
     name = "aethernode_preferences"
 )
 
 /**
- * Repository responsible for:
- * 1. Multi-country balanced fetching & verification across ProxyScrape v4, GeoNode, and Monosans
- *    geolocation proxy feeds so many countries have verified live servers ready.
- * 2. On-demand live country-specific fetching ([fetchAndVerifyLiveNodesForCountry]) when a user
- *    manually selects a specific country so it connects to a real working server in that exact
- *    country instead of staying stuck on Italy or any previous server.
+ * Live Multi-Source VPN Relay Repository for **A VPN** (By Ashir ♥️).
+ *
+ * Guarantees:
+ * - Zero fake servers and zero fabricated/identical pings.
+ * - Fetches live SOCKS5 & HTTP CONNECT relays from 6 independent worldwide feeds in parallel.
+ * - Stage 1 filters candidates using raw `System.nanoTime()` TCP handshakes (`measureRealTcpPingMs`).
+ * - Stage 2 strictly runs end-to-end HTTPS TLS + `api.ipify.org` Exit-IP verification
+ *   (`LocalTunnelGateway.verifyNodeEndToEndTls`), rejecting any proxy that fails CA validation
+ *   or fails to change the user's real public IP.
+ * - Streams verified relays incrementally via `onWaveVerified` so the UI populates live.
  */
 class PublicNodeRepository(private val context: Context) {
 
-    private val okHttpClient = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(7, TimeUnit.SECONDS)
+    private val httpClient = OkHttpClient.Builder()
+        .connectTimeout(4, TimeUnit.SECONDS)
+        .readTimeout(5, TimeUnit.SECONDS)
+        .callTimeout(7, TimeUnit.SECONDS)
         .build()
 
     val preferencesFlow: Flow<VpnPreferences> = context.vpnDataStore.data.map { prefs ->
@@ -63,9 +70,8 @@ class PublicNodeRepository(private val context: Context) {
                 ?: setOf("US", "DE", "JP", "SG"),
             preferredProtocol = protocol,
             dnsServer = prefs[KEY_DNS_SERVER] ?: "1.1.1.1",
-            safeSplitTunnelMode = prefs[KEY_SAFE_SPLIT_TUNNEL] ?: false,
-            autoReconnect = prefs[KEY_AUTO_RECONNECT] ?: true,
-            isDarkTheme = prefs[KEY_DARK_THEME] ?: false
+            isDarkTheme = prefs[KEY_DARK_THEME] ?: false,
+            wifiOnlyLatencyCheck = prefs[KEY_WIFI_ONLY_LATENCY] ?: false
         )
     }
 
@@ -87,675 +93,496 @@ class PublicNodeRepository(private val context: Context) {
         }
     }
 
-    suspend fun updateProtocol(protocol: VpnProtocol) {
-        context.vpnDataStore.edit { it[KEY_PREFERRED_PROTOCOL] = protocol.name }
-    }
-
-    suspend fun updateDnsServer(dnsServer: String) {
-        context.vpnDataStore.edit { it[KEY_DNS_SERVER] = dnsServer }
-    }
-
-    suspend fun updateSafeSplitTunnel(enabled: Boolean) {
-        context.vpnDataStore.edit { it[KEY_SAFE_SPLIT_TUNNEL] = enabled }
-    }
-
-    suspend fun updateAutoReconnect(enabled: Boolean) {
-        context.vpnDataStore.edit { it[KEY_AUTO_RECONNECT] = enabled }
-    }
-
     suspend fun updateDarkTheme(isDark: Boolean) {
         context.vpnDataStore.edit { it[KEY_DARK_THEME] = isDark }
     }
 
+    suspend fun updateWifiOnlyLatencyCheck(wifiOnly: Boolean) {
+        context.vpnDataStore.edit { it[KEY_WIFI_ONLY_LATENCY] = wifiOnly }
+    }
+
     /**
-     * Fetches and verifies live servers across diverse countries worldwide.
-     * Balances candidates across countries (up to 3 per country) before running parallel TLS
-     * verification so we don't end up with all verified servers in just one country (like Italy).
+     * Neutral bootstrap placeholder before the first live scan finishes.
+     * Holds no fake IP or fake ping.
      */
-    suspend fun fetchLivePublicNodes(): Result<List<VpnNode>> = withContext(Dispatchers.IO) {
-        AetherVpnStateBus.appendLog(
-            tag = "AUTO-FETCH",
-            message = "Fetching live multi-country servers and verifying TLS tunnels…"
-        )
+    fun getInitialBootstrapNode(): VpnNode = VpnNode(
+        id = "auto_scanning",
+        hostName = "",
+        ipAddress = "",
+        port = 1080,
+        countryName = "Auto Fastest",
+        countryCode = "XX",
+        cityName = "Scanning live relays…",
+        flagEmoji = "🌐",
+        region = VpnRegion.ALL,
+        pingMs = -1,
+        downloadSpeedMbps = 0.0,
+        operatorName = "Live Multi-Feed",
+        protocol = VpnProtocol.WIREGUARD_CHACHA20,
+        relayType = RelayTunnelType.SOCKS5,
+        isVerifiedWorking = false
+    )
+
+    /**
+     * Discovers and strictly TLS + Exit-IP verifies live worldwide relays in 2 parallel stages.
+     * Fairly tests candidates across ALL countries (not just lowest-ping local hubs) so US, Europe,
+     * Asia-Pacific, and Americas all appear and work reliably.
+     */
+    suspend fun fetchLivePublicNodes(
+        deviceDirectIp: String? = null,
+        onWaveVerified: ((List<VpnNode>) -> Unit)? = null
+    ): Result<List<VpnNode>> = withContext(Dispatchers.IO) {
         try {
-            val allFetched = coroutineScope {
-                val proxyScrapeDeferred = async { fetchProxyScrapeNodes(countryFilter = null) }
-                val geoNodeDeferred = async { fetchGeoNodeRelays(countryFilter = null) }
-                val monosansDeferred = async { fetchMonosansGeoRelays() }
+            val protectSocket = AetherVpnStateBus.protectSocketCallback
+            val protectDatagram = AetherVpnStateBus.protectDatagramCallback
 
-                (proxyScrapeDeferred.await() + geoNodeDeferred.await() + monosansDeferred.await())
-                    .distinctBy { "${it.ipAddress}:${it.port}" }
-            }
-
-            if (allFetched.isEmpty()) {
-                val baseline = deduplicateFastestPerCountry(getVerifiedCommunityNodes())
-                AetherVpnStateBus.updateNodePool(baseline)
-                return@withContext Result.success(baseline)
-            }
-
-            // Pick up to 3 top candidates PER COUNTRY so our verification scan covers 20+ countries!
-            val countryBalancedCandidates = allFetched
-                .groupBy { it.countryCode.uppercase(Locale.US) }
-                .values
-                .flatMap { countryList ->
-                    countryList.sortedWith(
-                        compareBy<VpnNode> {
-                            when (it.relayType) {
-                                RelayTunnelType.SOCKS5 -> 0
-                                RelayTunnelType.SOCKS4 -> 1
-                                RelayTunnelType.HTTP_CONNECT -> 2
-                            }
-                        }.thenBy { it.pingMs }
-                    ).take(3)
+            val resolvedDirectIp = deviceDirectIp
+                ?: AetherVpnStateBus.telemetry.value.deviceDirectIp
+                ?: LocalTunnelGateway.fetchDeviceDirectIp(protectSocket)?.also { ip ->
+                    AetherVpnStateBus.updateTelemetry { it.copy(deviceDirectIp = ip) }
                 }
-                .take(72)
 
-            val verifiedResults = coroutineScope {
-                countryBalancedCandidates.map { candidate ->
+            val rawCandidates = fetchAllPublicFeedsInParallel()
+            if (rawCandidates.isEmpty()) {
+                return@withContext Result.failure(IllegalStateException("Unable to reach live relay feeds"))
+            }
+
+            // Pick diverse candidates across all countries (prioritizing SOCKS5), capped for ultra-light CPU/battery
+            val diverseCandidates = pickDiverseCountryCandidates(rawCandidates, maxTotal = 160)
+
+            // Stage 1: Lightweight parallel TCP handshake duration filter
+            val tcpSemaphore = Semaphore(16)
+            val allReachable = coroutineScope {
+                diverseCandidates.map { candidate ->
                     async(Dispatchers.IO) {
-                        val verified = LocalTunnelGateway.verifyNodeHttpsTunnel(candidate, timeoutMs = 2200)
-                        if (verified != null) {
-                            val (workingType, measuredRtt) = verified
-                            candidate.copy(
-                                relayType = workingType,
-                                pingMs = measuredRtt,
-                                isVerifiedWorking = true,
-                                isLiveFromPublicApi = true
+                        tcpSemaphore.withPermit {
+                            val rtt = LocalTunnelGateway.measureTcpHandshakeDurationMs(
+                                ipOrHost = candidate.ipAddress,
+                                port = candidate.port,
+                                timeoutMs = 1800,
+                                protectSocket = protectSocket
                             )
-                        } else {
-                            candidate.copy(isVerifiedWorking = false)
+                            if (rtt != null) candidate.copy(pingMs = rtt) else null
+                        }
+                    }
+                }.awaitAll().filterNotNull()
+            }
+
+            if (allReachable.isEmpty()) {
+                return@withContext Result.success(emptyList())
+            }
+
+            // Interleave up to 5 fastest candidates PER country so Singapore never crowds out US/EU/JP
+            val stage2Candidates = selectBalancedPerCountryForTls(allReachable, perCountryCap = 5, maxTotal = 85)
+
+            // Stage 2: Strict End-to-End HTTPS TLS + Exit-IP verification against api.ipify.org (4500ms timeout)
+            val tlsSemaphore = Semaphore(12)
+            val verifiedCollector = Collections.synchronizedList(mutableListOf<VpnNode>())
+
+            coroutineScope {
+                stage2Candidates.map { candidate ->
+                    async(Dispatchers.IO) {
+                        tlsSemaphore.withPermit {
+                            val res = LocalTunnelGateway.verifyNodeEndToEndTls(
+                                node = candidate,
+                                deviceDirectIp = resolvedDirectIp,
+                                timeoutMs = 4500,
+                                protectSocket = protectSocket,
+                                protectDatagram = protectDatagram
+                            )
+                            if (res != null) {
+                                val verifiedBase = candidate.copy(
+                                    relayType = res.relayType,
+                                    pingMs = res.realTcpPingMs,
+                                    verifiedExitIp = res.verifiedExitIp,
+                                    isVerifiedWorking = true,
+                                    isLiveFromPublicApi = true
+                                )
+                                val enriched = verifyTrueExitGeolocation(verifiedBase)
+                                val (allVerifiedSnapshot, dedupSnapshot) = synchronized(verifiedCollector) {
+                                    verifiedCollector.add(enriched)
+                                    val fullCopy = verifiedCollector
+                                        .sortedBy { if (it.pingMs > 0) it.pingMs else Int.MAX_VALUE }
+                                    val dedupCopy = deduplicateFastestPerCountry(fullCopy)
+                                    fullCopy to dedupCopy
+                                }
+                                AetherVpnStateBus.updateVerifiedBackupPool(allVerifiedSnapshot)
+                                AetherVpnStateBus.updateNodePool(dedupSnapshot)
+                                onWaveVerified?.invoke(dedupSnapshot)
+                            }
                         }
                     }
                 }.awaitAll()
             }
 
-            val strictTlsVerifiedList = verifiedResults
-                .filter { it.isVerifiedWorking }
-                .sortedBy { it.pingMs }
-
-            val fullPool = (strictTlsVerifiedList + allFetched + getVerifiedCommunityNodes())
-                .distinctBy { "${it.ipAddress}:${it.port}" }
-
-            AetherVpnStateBus.updateNodePool(fullPool)
-
-            // Prioritize countries that have verified working nodes first
-            val onePerCountry = deduplicateFastestPerCountry(fullPool)
-
-            AetherVpnStateBus.appendLog(
-                tag = "AUTO-FETCH",
-                message = "Verified ${strictTlsVerifiedList.size} live servers across ${onePerCountry.size} countries.",
-                isHighlight = true
-            )
-            Result.success(onePerCountry)
+            val fullVerified = synchronized(verifiedCollector) {
+                verifiedCollector.sortedBy { if (it.pingMs > 0) it.pingMs else Int.MAX_VALUE }
+            }
+            val finalVerified = deduplicateFastestPerCountry(fullVerified)
+            AetherVpnStateBus.updateVerifiedBackupPool(fullVerified)
+            AetherVpnStateBus.updateNodePool(finalVerified)
+            onWaveVerified?.invoke(finalVerified)
+            Result.success(finalVerified)
         } catch (e: Exception) {
-            val fallback = deduplicateFastestPerCountry(getVerifiedCommunityNodes())
-            AetherVpnStateBus.updateNodePool(fallback)
             Result.failure(e)
         }
     }
 
+    private suspend fun fetchAllPublicFeedsInParallel(): List<VpnNode> = coroutineScope {
+        val f1 = async(Dispatchers.IO) { runCatching { fetchProxyScrapeV4() }.getOrDefault(emptyList()) }
+        val f2 = async(Dispatchers.IO) { runCatching { fetchProxiflyJson("https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.json", RelayTunnelType.SOCKS5) }.getOrDefault(emptyList()) }
+        val f3 = async(Dispatchers.IO) { runCatching { fetchProxiflyJson("https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/http/data.json", RelayTunnelType.HTTP_CONNECT) }.getOrDefault(emptyList()) }
+        val f4 = async(Dispatchers.IO) { runCatching { fetchGeoNode() }.getOrDefault(emptyList()) }
+        val f5 = async(Dispatchers.IO) { runCatching { fetchPlainHostPortList("https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt", RelayTunnelType.SOCKS5, "Monosans SOCKS5") }.getOrDefault(emptyList()) }
+        val f6 = async(Dispatchers.IO) { runCatching { fetchPlainHostPortList("https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt", RelayTunnelType.SOCKS5, "SpeedX SOCKS5") }.getOrDefault(emptyList()) }
+        val f7 = async(Dispatchers.IO) { runCatching { fetchPlainHostPortList("https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt", RelayTunnelType.HTTP_CONNECT, "Monosans HTTP") }.getOrDefault(emptyList()) }
+
+        // Prioritize SOCKS5 feeds first when deduplicating IP:Port
+        (f2.await() + f1.await() + f4.await() + f5.await() + f6.await() + f3.await() + f7.await())
+            .distinctBy { "${it.ipAddress}:${it.port}" }
+    }
+
+    private fun fetchProxyScrapeV4(): List<VpnNode> {
+        val url = "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=json&timeout=3000"
+        val body = httpGetString(url) ?: return emptyList()
+        val root = JSONObject(body)
+        val proxies = root.optJSONArray("proxies") ?: return emptyList()
+        val out = ArrayList<VpnNode>(proxies.length())
+        for (i in 0 until minOf(proxies.length(), 150)) {
+            val item = proxies.optJSONObject(i) ?: continue
+            val ip = item.optString("ip").trim()
+            val port = item.optInt("port", 0)
+            if (ip.isEmpty() || port !in 1..65535) continue
+            val proto = item.optString("protocol").lowercase(Locale.US)
+            val relayType = when {
+                proto.contains("socks5") -> RelayTunnelType.SOCKS5
+                proto.contains("socks4") -> RelayTunnelType.SOCKS4
+                else -> RelayTunnelType.HTTP_CONNECT
+            }
+            val geo = item.optJSONObject("ip_data")
+            val cc = geo?.optString("countryCode")?.take(2)?.uppercase(Locale.US).orEmpty().ifEmpty { "XX" }
+            val country = geo?.optString("country").orEmpty().ifEmpty { countryNameFromCode(cc) }
+            val city = geo?.optString("city").orEmpty().ifEmpty { "Relay" }
+            val isp = geo?.optString("isp").orEmpty().ifEmpty { "ProxyScrape Live" }
+            val speedKbps = item.optDouble("average_timeout", 800.0)
+            out.add(
+                buildCandidateNode(
+                    ip = ip,
+                    port = port,
+                    countryCode = cc,
+                    countryName = country,
+                    cityName = city,
+                    operatorName = isp,
+                    relayType = relayType,
+                    estMbps = if (speedKbps > 0) (12000.0 / speedKbps).coerceIn(10.0, 250.0) else 45.0
+                )
+            )
+        }
+        return out
+    }
+
+    private fun fetchProxiflyJson(url: String, defaultType: RelayTunnelType): List<VpnNode> {
+        val body = httpGetString(url) ?: return emptyList()
+        val arr = JSONArray(body)
+        val out = ArrayList<VpnNode>(minOf(arr.length(), 150))
+        for (i in 0 until minOf(arr.length(), 150)) {
+            val item = arr.optJSONObject(i) ?: continue
+            val ip = item.optString("ip").trim()
+            val port = item.optInt("port", 0)
+            if (ip.isEmpty() || port !in 1..65535) continue
+            val geo = item.optJSONObject("geolocation")
+            val cc = geo?.optString("country")?.take(2)?.uppercase(Locale.US).orEmpty().ifEmpty { "XX" }
+            val city = geo?.optString("city").orEmpty().ifEmpty { "Relay" }
+            out.add(
+                buildCandidateNode(
+                    ip = ip,
+                    port = port,
+                    countryCode = cc,
+                    countryName = countryNameFromCode(cc),
+                    cityName = city,
+                    operatorName = "Proxifly Live",
+                    relayType = defaultType,
+                    estMbps = 65.0
+                )
+            )
+        }
+        return out
+    }
+
+    private fun fetchGeoNode(): List<VpnNode> {
+        val url = "https://proxylist.geonode.com/api/proxy-list?limit=120&page=1&sort_by=lastChecked&sort_type=desc&protocols=socks5%2Chttp"
+        val body = httpGetString(url) ?: return emptyList()
+        val root = JSONObject(body)
+        val data = root.optJSONArray("data") ?: return emptyList()
+        val out = ArrayList<VpnNode>(data.length())
+        for (i in 0 until data.length()) {
+            val item = data.optJSONObject(i) ?: continue
+            val ip = item.optString("ip").trim()
+            val port = item.optString("port").toIntOrNull() ?: continue
+            if (ip.isEmpty() || port !in 1..65535) continue
+            val protocols = item.optJSONArray("protocols")
+            val firstProto = protocols?.optString(0)?.lowercase(Locale.US).orEmpty()
+            val relayType = when {
+                firstProto.contains("socks5") -> RelayTunnelType.SOCKS5
+                firstProto.contains("socks4") -> RelayTunnelType.SOCKS4
+                else -> RelayTunnelType.HTTP_CONNECT
+            }
+            val cc = item.optString("country").take(2).uppercase(Locale.US).ifEmpty { "XX" }
+            val city = item.optString("city").ifEmpty { "Relay" }
+            val org = item.optString("org").ifEmpty { "GeoNode Live" }
+            val speed = item.optDouble("speed", 40.0)
+            out.add(
+                buildCandidateNode(
+                    ip = ip,
+                    port = port,
+                    countryCode = cc,
+                    countryName = countryNameFromCode(cc),
+                    cityName = city,
+                    operatorName = org,
+                    relayType = relayType,
+                    estMbps = speed.coerceIn(10.0, 200.0)
+                )
+            )
+        }
+        return out
+    }
+
+    private fun fetchPlainHostPortList(
+        url: String,
+        relayType: RelayTunnelType,
+        operatorLabel: String
+    ): List<VpnNode> {
+        val body = httpGetString(url) ?: return emptyList()
+        val out = ArrayList<VpnNode>(80)
+        for (rawLine in body.lineSequence()) {
+            if (out.size >= 80) break
+            val line = rawLine.trim()
+            val colonIdx = line.lastIndexOf(':')
+            if (colonIdx <= 0) continue
+            val ip = line.substring(0, colonIdx).trim()
+            val port = line.substring(colonIdx + 1).trim().toIntOrNull() ?: continue
+            if (port !in 1..65535) continue
+            out.add(
+                buildCandidateNode(
+                    ip = ip,
+                    port = port,
+                    countryCode = "XX",
+                    countryName = "Global Relay",
+                    cityName = ip,
+                    operatorName = operatorLabel,
+                    relayType = relayType,
+                    estMbps = 50.0
+                )
+            )
+        }
+        return out
+    }
+
+    private data class ExitGeoInfo(
+        val countryCode: String,
+        val countryName: String,
+        val cityName: String,
+        val ispName: String
+    )
+
+    private val exitGeoCache = ConcurrentHashMap<String, ExitGeoInfo>()
+
     /**
-     * Queries live ProxyScrape & GeoNode APIs specifically for [countryCode] (e.g., "US", "DE", "JP")
-     * and tests candidates in parallel to find a genuine working server in that exact country.
+     * Always resolves the TRUE country/city of the proxy's verified outbound Exit IP (`verifiedExitIp`),
+     * because public feeds frequently label multi-hop/cloud relays with the inbound IP's country while
+     * Google sees a completely different outbound country (e.g. feed says DE, exit IP is in GB).
      */
-    suspend fun fetchAndVerifyLiveNodesForCountry(
+    private fun verifyTrueExitGeolocation(node: VpnNode): VpnNode {
+        val lookupTarget = node.verifiedExitIp.ifEmpty { node.ipAddress }
+        if (lookupTarget.isBlank()) return node
+
+        val cached = exitGeoCache[lookupTarget]
+        val resolved = cached ?: fetchGeoForExitIp(lookupTarget)?.also {
+            exitGeoCache[lookupTarget] = it
+        } ?: return node
+
+        if (resolved.countryCode.length != 2 || resolved.countryCode == "XX") return node
+
+        return node.copy(
+            id = "country-${resolved.countryCode}",
+            countryCode = resolved.countryCode,
+            countryName = resolved.countryName.ifEmpty { countryNameFromCode(resolved.countryCode) },
+            cityName = resolved.cityName.ifEmpty { node.cityName },
+            flagEmoji = countryCodeToFlagEmoji(resolved.countryCode),
+            region = mapCountryCodeToRegion(resolved.countryCode),
+            operatorName = resolved.ispName.ifEmpty { node.operatorName }
+        )
+    }
+
+    private fun fetchGeoForExitIp(ip: String): ExitGeoInfo? {
+        // 1. Primary HTTPS GeoIP lookup (ipwho.is gives country, code, city, isp)
+        try {
+            val body = httpGetString("https://ipwho.is/$ip")
+            if (!body.isNullOrBlank()) {
+                val json = JSONObject(body)
+                if (json.optBoolean("success", false)) {
+                    val cc = json.optString("country_code").take(2).uppercase(Locale.US)
+                    if (cc.length == 2 && cc != "XX") {
+                        return ExitGeoInfo(
+                            countryCode = cc,
+                            countryName = json.optString("country").ifEmpty { countryNameFromCode(cc) },
+                            cityName = json.optString("city"),
+                            ispName = json.optJSONObject("connection")?.optString("isp").orEmpty()
+                        )
+                    }
+                }
+            }
+        } catch (_: Exception) {
+        }
+
+        // 2. Fallback HTTPS GeoIP lookup (api.country.is is Cloudflare-backed with generous quota)
+        try {
+            val body = httpGetString("https://api.country.is/$ip")
+            if (!body.isNullOrBlank()) {
+                val json = JSONObject(body)
+                val cc = json.optString("country").take(2).uppercase(Locale.US)
+                if (cc.length == 2 && cc != "XX") {
+                    return ExitGeoInfo(
+                        countryCode = cc,
+                        countryName = countryNameFromCode(cc),
+                        cityName = "",
+                        ispName = ""
+                    )
+                }
+            }
+        } catch (_: Exception) {
+        }
+
+        return null
+    }
+
+    private fun httpGetString(urlString: String): String? {
+        return try {
+            val req = Request.Builder()
+                .url(urlString)
+                .header("User-Agent", "AVPN-Android/1.0")
+                .build()
+            httpClient.newCall(req).execute().use { resp ->
+                if (resp.isSuccessful) resp.body?.string() else null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun buildCandidateNode(
+        ip: String,
+        port: Int,
         countryCode: String,
         countryName: String,
         cityName: String,
-        flagEmoji: String,
-        protectSocket: ((Socket) -> Boolean)? = null
-    ): List<VpnNode> = withContext(Dispatchers.IO) {
-        val cleanCode = countryCode.trim().uppercase(Locale.US)
-        val poolCandidates = AetherVpnStateBus.nodePool.value.filter {
-            it.countryCode.equals(cleanCode, ignoreCase = true)
-        }
-
-        val liveFetched = coroutineScope {
-            val ps = async { fetchProxyScrapeNodes(countryFilter = cleanCode) }
-            val gn = async { fetchGeoNodeRelays(countryFilter = cleanCode) }
-            ps.await() + gn.await()
-        }
-
-        val combinedCandidates = (poolCandidates + liveFetched)
-            .distinctBy { "${it.ipAddress}:${it.port}" }
-            .take(28)
-
-        if (combinedCandidates.isEmpty()) return@withContext emptyList()
-
-        val verified = coroutineScope {
-            combinedCandidates.map { candidate ->
-                async(Dispatchers.IO) {
-                    val check = LocalTunnelGateway.verifyNodeHttpsTunnel(
-                        node = candidate,
-                        timeoutMs = 2200,
-                        protectSocket = protectSocket
-                    )
-                    if (check != null) {
-                        candidate.copy(
-                            id = "country-$cleanCode",
-                            countryCode = cleanCode,
-                            countryName = countryName.ifEmpty { candidate.countryName },
-                            cityName = candidate.cityName.ifEmpty { cityName },
-                            flagEmoji = flagEmoji.ifEmpty { candidate.flagEmoji },
-                            relayType = check.first,
-                            pingMs = check.second,
-                            isVerifiedWorking = true,
-                            isLiveFromPublicApi = true
-                        )
-                    } else null
-                }
-            }.awaitAll().filterNotNull().sortedBy { it.pingMs }
-        }
-
-        if (verified.isNotEmpty()) {
-            // Merge newly verified country servers into global pool
-            val updatedPool = (verified + AetherVpnStateBus.nodePool.value)
-                .distinctBy { "${it.ipAddress}:${it.port}" }
-            AetherVpnStateBus.updateNodePool(updatedPool)
-            return@withContext verified
-        }
-
-        // Fallback: TCP reachability check on same-country candidates if strict Google 204 timed out
-        val tcpReachable = coroutineScope {
-            combinedCandidates.take(14).map { candidate ->
-                async(Dispatchers.IO) {
-                    val startNs = System.nanoTime()
-                    val ok = try {
-                        Socket().use { sock ->
-                            protectSocket?.invoke(sock)
-                            sock.connect(InetSocketAddress(candidate.ipAddress, candidate.port), 1500)
-                            true
-                        }
-                    } catch (_: Exception) {
-                        false
-                    }
-                    if (ok) {
-                        val rtt = ((System.nanoTime() - startNs) / 1_000_000L).toInt().coerceIn(20, 900)
-                        candidate.copy(
-                            id = "country-$cleanCode",
-                            countryCode = cleanCode,
-                            countryName = countryName.ifEmpty { candidate.countryName },
-                            cityName = candidate.cityName.ifEmpty { cityName },
-                            flagEmoji = flagEmoji.ifEmpty { candidate.flagEmoji },
-                            pingMs = rtt,
-                            isVerifiedWorking = true
-                        )
-                    } else null
-                }
-            }.awaitAll().filterNotNull().sortedBy { it.pingMs }
-        }
-
-        tcpReachable
+        operatorName: String,
+        relayType: RelayTunnelType,
+        estMbps: Double
+    ): VpnNode {
+        val cc = countryCode.uppercase(Locale.US).ifEmpty { "XX" }
+        return VpnNode(
+            id = "country-$cc",
+            hostName = ip,
+            ipAddress = ip,
+            port = port,
+            countryName = countryName,
+            countryCode = cc,
+            cityName = cityName,
+            flagEmoji = countryCodeToFlagEmoji(cc),
+            region = mapCountryCodeToRegion(cc),
+            pingMs = -1,
+            downloadSpeedMbps = estMbps,
+            operatorName = operatorName,
+            protocol = VpnProtocol.WIREGUARD_CHACHA20,
+            relayType = relayType,
+            isLiveFromPublicApi = true,
+            isVerifiedWorking = false
+        )
     }
 
     /**
-     * Groups nodes by [VpnNode.countryCode] and selects ONLY the single best/fastest server
-     * for each country so the user never sees duplicate countries stacked in the list.
+     * Selects diverse candidates across all countries, prioritizing SOCKS5 relays first within each country.
      */
+    private fun pickDiverseCountryCandidates(nodes: List<VpnNode>, maxTotal: Int): List<VpnNode> {
+        val byCountry = nodes.groupBy { it.countryCode.uppercase(Locale.US) }
+            .mapValues { (_, list) ->
+                list.sortedBy { if (it.relayType == RelayTunnelType.SOCKS5) 0 else 1 }
+            }
+        val result = ArrayList<VpnNode>(maxTotal)
+        val roundLimit = 8
+        val knownKeys = byCountry.keys.filter { it != "XX" }
+
+        for (round in 0 until roundLimit) {
+            for (cc in knownKeys) {
+                val bucket = byCountry[cc] ?: continue
+                if (round < bucket.size) {
+                    result.add(bucket[round])
+                    if (result.size >= maxTotal) return result
+                }
+            }
+        }
+        val unknownBucket = byCountry["XX"].orEmpty()
+        for (candidate in unknownBucket) {
+            if (result.size >= maxTotal) break
+            result.add(candidate)
+        }
+        return result
+    }
+
+    /**
+     * Selects up to [perCountryCap] fastest TCP-reachable candidates PER country in round-robin
+     * so low-latency local hubs (like SG) never crowd out transcontinental servers (US, DE, GB, JP, etc.).
+     */
+    private fun selectBalancedPerCountryForTls(
+        reachable: List<VpnNode>,
+        perCountryCap: Int,
+        maxTotal: Int
+    ): List<VpnNode> {
+        val byCountry = reachable.groupBy { it.countryCode.uppercase(Locale.US) }
+            .mapValues { (_, list) ->
+                list.sortedWith(
+                    compareBy<VpnNode> { if (it.relayType == RelayTunnelType.SOCKS5) 0 else 1 }
+                        .thenBy { if (it.pingMs > 0) it.pingMs else Int.MAX_VALUE }
+                ).take(perCountryCap)
+            }
+        val result = ArrayList<VpnNode>(maxTotal)
+        val knownKeys = byCountry.keys.filter { it != "XX" }
+
+        for (round in 0 until perCountryCap) {
+            for (cc in knownKeys) {
+                val bucket = byCountry[cc] ?: continue
+                if (round < bucket.size) {
+                    result.add(bucket[round])
+                    if (result.size >= maxTotal) return result
+                }
+            }
+        }
+        val unknownBucket = byCountry["XX"].orEmpty()
+        for (candidate in unknownBucket) {
+            if (result.size >= maxTotal) break
+            result.add(candidate)
+        }
+        return result
+    }
+
     fun deduplicateFastestPerCountry(nodes: List<VpnNode>): List<VpnNode> {
         return nodes
-            .filter { it.countryCode.isNotBlank() && it.countryCode != "UN" && it.countryCode != "XX" }
-            .groupBy { it.countryCode.uppercase(Locale.US) }
-            .map { (code, countryNodes) ->
-                val best = countryNodes.sortedWith(
-                    compareByDescending<VpnNode> { it.isVerifiedWorking }
-                        .thenBy {
-                            when (it.relayType) {
-                                RelayTunnelType.SOCKS5 -> 0
-                                RelayTunnelType.SOCKS4 -> 1
-                                RelayTunnelType.HTTP_CONNECT -> 2
-                            }
-                        }
-                        .thenBy { it.pingMs }
+            .filter { it.ipAddress.isNotBlank() }
+            .groupBy {
+                if (it.isCustomNode) "CUSTOM_${it.ipAddress}_${it.port}"
+                else it.countryCode.uppercase(Locale.US)
+            }
+            .map { (key, bucket) ->
+                val best = bucket.sortedWith(
+                    compareByDescending<VpnNode> { it.isCustomNode }
+                        .thenByDescending { it.isVerifiedWorking }
+                        .thenBy { if (it.pingMs > 0) it.pingMs else Int.MAX_VALUE }
                 ).first()
-                best.copy(id = "country-$code")
+                if (best.isCustomNode) best else best.copy(id = "country-${key.uppercase(Locale.US)}")
             }
-            .sortedWith(
-                compareByDescending<VpnNode> { it.isVerifiedWorking }.thenBy { it.pingMs }
-            )
+            .sortedBy { if (it.pingMs > 0) it.pingMs else Int.MAX_VALUE }
     }
-
-    /**
-     * Source 1: ProxyScrape v4 Live Worldwide API (supports optional `countryFilter`).
-     */
-    private fun fetchProxyScrapeNodes(countryFilter: String? = null): List<VpnNode> {
-        val list = mutableListOf<VpnNode>()
-        try {
-            val countryParam = if (!countryFilter.isNullOrBlank()) "&country=$countryFilter" else ""
-            val url = "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=socks5,socks4,http$countryParam&proxy_format=protocolipport&format=json&timeout=3500"
-            val req = Request.Builder()
-                .url(url)
-                .header("User-Agent", "AVPN-Android/1.0")
-                .get()
-                .build()
-
-            okHttpClient.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return emptyList()
-                val body = resp.body?.string().orEmpty()
-                val root = JSONObject(body)
-                val proxies = root.optJSONArray("proxies") ?: return emptyList()
-
-                val count = minOf(proxies.length(), 110)
-                for (i in 0 until count) {
-                    val item = proxies.optJSONObject(i) ?: continue
-                    if (!item.optBoolean("alive", true)) continue
-                    val ip = item.optString("ip").trim()
-                    val port = item.optInt("port", 0)
-                    if (ip.isEmpty() || port <= 0) continue
-
-                    val protoStr = item.optString("protocol", "socks5").lowercase(Locale.US)
-                    val relayType = when {
-                        protoStr.contains("socks5") -> RelayTunnelType.SOCKS5
-                        protoStr.contains("socks4") -> RelayTunnelType.SOCKS4
-                        else -> RelayTunnelType.HTTP_CONNECT
-                    }
-
-                    val ipData = item.optJSONObject("ip_data")
-                    val countryCode = ipData?.optString("countryCode")?.uppercase(Locale.US)?.take(2)
-                        ?.ifEmpty { countryFilter }
-                        ?: countryFilter
-                        ?: continue
-                    if (countryCode == "UN" || countryCode == "XX") continue
-                    val countryName = ipData?.optString("country")?.ifEmpty { null }
-                        ?: countryCodeToName(countryCode)
-
-                    val cityName = ipData?.optString("city")?.ifEmpty { null }
-                        ?: inferCityForCountry(countryCode, countryName)
-                    val isp = ipData?.optString("isp")?.ifEmpty { null } ?: "Ultra-Fast Tunnel"
-                    val avgTimeoutMs = (item.optDouble("average_timeout", 28.0) * 0.12)
-                        .roundToInt()
-                        .coerceIn(7, 29)
-                    val uptimePct = item.optDouble("uptime", 96.0)
-
-                    list.add(
-                        VpnNode(
-                            id = "country-$countryCode",
-                            hostName = "${countryCode.lowercase(Locale.US)}.open.node",
-                            ipAddress = ip,
-                            port = port,
-                            countryName = countryName,
-                            countryCode = countryCode,
-                            cityName = cityName,
-                            flagEmoji = countryCodeToFlagEmoji(countryCode),
-                            region = mapCountryCodeToRegion(countryCode),
-                            pingMs = avgTimeoutMs,
-                            downloadSpeedMbps = (160.0 + (uptimePct * 0.9)).roundToInt() / 1.0,
-                            activeSessions = 15,
-                            uptimeHours = 240,
-                            operatorName = isp,
-                            protocol = VpnProtocol.WIREGUARD_CHACHA20,
-                            relayType = relayType,
-                            openVpnConfigPreview = defaultOpenVpnPreview(ip, port, relayType),
-                            isLiveFromPublicApi = true
-                        )
-                    )
-                }
-            }
-        } catch (_: Exception) {
-        }
-        return list
-    }
-
-    /**
-     * Source 2: GeoNode Public Worldwide Relay JSON API (supports optional `countryFilter`).
-     */
-    private fun fetchGeoNodeRelays(countryFilter: String? = null): List<VpnNode> {
-        val list = mutableListOf<VpnNode>()
-        try {
-            val countryParam = if (!countryFilter.isNullOrBlank()) "&country=$countryFilter" else ""
-            val req = Request.Builder()
-                .url("https://proxylist.geonode.com/api/proxy-list?protocols=socks5%2Csocks4%2Chttp$countryParam&limit=70&page=1&sort_by=lastChecked&sort_type=desc")
-                .header("User-Agent", "AVPN-Android/1.0")
-                .get()
-                .build()
-
-            okHttpClient.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return emptyList()
-                val body = resp.body?.string().orEmpty()
-                val root = JSONObject(body)
-                val dataArr = root.optJSONArray("data") ?: return emptyList()
-
-                for (i in 0 until dataArr.length()) {
-                    val item = dataArr.optJSONObject(i) ?: continue
-                    val ip = item.optString("ip").trim()
-                    val port = item.optString("port").toIntOrNull() ?: item.optInt("port", 0)
-                    if (ip.isEmpty() || port <= 0) continue
-
-                    val protocolsArr = item.optJSONArray("protocols")
-                    val firstProto = protocolsArr?.optString(0, "socks5")?.lowercase(Locale.US) ?: "socks5"
-                    val relayType = when {
-                        firstProto.contains("socks5") -> RelayTunnelType.SOCKS5
-                        firstProto.contains("socks4") -> RelayTunnelType.SOCKS4
-                        else -> RelayTunnelType.HTTP_CONNECT
-                    }
-
-                    val countryCode = item.optString("country", countryFilter ?: "").uppercase(Locale.US).take(2)
-                    if (countryCode.length != 2 || countryCode == "UN") continue
-                    val countryName = countryCodeToName(countryCode)
-                    val cityName = item.optString("city").ifEmpty { inferCityForCountry(countryCode, countryName) }
-                    val isp = item.optString("isp").ifEmpty { "GeoNode Ultra Tunnel" }
-                    val latency = (item.optDouble("latency", 24.0) * 0.25).roundToInt().coerceIn(8, 32)
-
-                    list.add(
-                        VpnNode(
-                            id = "country-$countryCode",
-                            hostName = "${countryCode.lowercase(Locale.US)}.geonode.org",
-                            ipAddress = ip,
-                            port = port,
-                            countryName = countryName,
-                            countryCode = countryCode,
-                            cityName = cityName,
-                            flagEmoji = countryCodeToFlagEmoji(countryCode),
-                            region = mapCountryCodeToRegion(countryCode),
-                            pingMs = latency,
-                            downloadSpeedMbps = 210.0,
-                            activeSessions = 14,
-                            uptimeHours = 360,
-                            operatorName = isp,
-                            protocol = VpnProtocol.WIREGUARD_CHACHA20,
-                            relayType = relayType,
-                            openVpnConfigPreview = defaultOpenVpnPreview(ip, port, relayType),
-                            isLiveFromPublicApi = true
-                        )
-                    )
-                }
-            }
-        } catch (_: Exception) {
-        }
-        return list
-    }
-
-    /**
-     * Source 3: Monosans Geolocation-Verified Proxy List on GitHub.
-     */
-    private fun fetchMonosansGeoRelays(): List<VpnNode> {
-        val list = mutableListOf<VpnNode>()
-        try {
-            val req = Request.Builder()
-                .url("https://raw.githubusercontent.com/monosans/proxy-list/main/proxies_geolocation/socks5.json")
-                .get()
-                .build()
-
-            okHttpClient.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return emptyList()
-                val body = resp.body?.string().orEmpty()
-                val arr = JSONArray(body)
-                val count = minOf(arr.length(), 80)
-                for (i in 0 until count) {
-                    val item = arr.optJSONObject(i) ?: continue
-                    val ip = item.optString("host").trim()
-                    val port = item.optInt("port", 0)
-                    if (ip.isEmpty() || port <= 0) continue
-
-                    val geo = item.optJSONObject("geolocation")
-                    val countryObj = geo?.optJSONObject("country")
-                    val countryCode = countryObj?.optString("iso_code")?.uppercase(Locale.US)?.take(2) ?: continue
-                    if (countryCode.length != 2 || countryCode == "UN") continue
-
-                    val countryName = countryObj.optJSONObject("names")?.optString("en")
-                        ?.ifEmpty { null } ?: countryCodeToName(countryCode)
-                    val cityName = geo.optJSONObject("city")?.optJSONObject("names")?.optString("en")
-                        ?.ifEmpty { null } ?: inferCityForCountry(countryCode, countryName)
-
-                    list.add(
-                        VpnNode(
-                            id = "country-$countryCode",
-                            hostName = "${countryCode.lowercase(Locale.US)}.monosans.org",
-                            ipAddress = ip,
-                            port = port,
-                            countryName = countryName,
-                            countryCode = countryCode,
-                            cityName = cityName,
-                            flagEmoji = countryCodeToFlagEmoji(countryCode),
-                            region = mapCountryCodeToRegion(countryCode),
-                            pingMs = 9 + (i % 19),
-                            downloadSpeedMbps = 680.0,
-                            activeSessions = 12,
-                            uptimeHours = 240,
-                            operatorName = "Verified Geo Tunnel",
-                            protocol = VpnProtocol.WIREGUARD_CHACHA20,
-                            relayType = RelayTunnelType.SOCKS5,
-                            openVpnConfigPreview = defaultOpenVpnPreview(ip, port, RelayTunnelType.SOCKS5),
-                            isLiveFromPublicApi = true
-                        )
-                    )
-                }
-            }
-        } catch (_: Exception) {
-        }
-        return list
-    }
-
-    fun getVerifiedCommunityNodes(): List<VpnNode> = listOf(
-        VpnNode(
-            id = "country-SG",
-            hostName = "sg.opengw.net",
-            ipAddress = "103.253.41.98",
-            port = 1080,
-            countryName = "Singapore",
-            countryCode = "SG",
-            cityName = "Singapore",
-            flagEmoji = "🇸🇬",
-            region = VpnRegion.ASIA_PACIFIC,
-            pingMs = 7,
-            downloadSpeedMbps = 940.0,
-            activeSessions = 52,
-            uptimeHours = 1840,
-            operatorName = "Wi-Fi Warp Direct",
-            protocol = VpnProtocol.WIREGUARD_CHACHA20,
-            relayType = RelayTunnelType.SOCKS5,
-            isVerifiedWorking = true
-        ),
-        VpnNode(
-            id = "country-US",
-            hostName = "us.opengw.net",
-            ipAddress = "198.54.117.200",
-            port = 1080,
-            countryName = "United States",
-            countryCode = "US",
-            cityName = "New York",
-            flagEmoji = "🇺🇸",
-            region = VpnRegion.AMERICAS,
-            pingMs = 9,
-            downloadSpeedMbps = 910.0,
-            activeSessions = 64,
-            uptimeHours = 980,
-            operatorName = "Wi-Fi Warp Direct",
-            protocol = VpnProtocol.WIREGUARD_CHACHA20,
-            relayType = RelayTunnelType.SOCKS5,
-            isVerifiedWorking = true
-        ),
-        VpnNode(
-            id = "country-DE",
-            hostName = "de.freegw.org",
-            ipAddress = "185.220.101.45",
-            port = 1080,
-            countryName = "Germany",
-            countryCode = "DE",
-            cityName = "Frankfurt",
-            flagEmoji = "🇩🇪",
-            region = VpnRegion.EUROPE,
-            pingMs = 11,
-            downloadSpeedMbps = 890.0,
-            activeSessions = 48,
-            uptimeHours = 2160,
-            operatorName = "Wi-Fi Warp Direct",
-            protocol = VpnProtocol.WIREGUARD_CHACHA20,
-            relayType = RelayTunnelType.SOCKS5,
-            isVerifiedWorking = true
-        ),
-        VpnNode(
-            id = "country-JP",
-            hostName = "jp.opengw.net",
-            ipAddress = "219.100.37.24",
-            port = 443,
-            countryName = "Japan",
-            countryCode = "JP",
-            cityName = "Tokyo",
-            flagEmoji = "🇯🇵",
-            region = VpnRegion.ASIA_PACIFIC,
-            pingMs = 12,
-            downloadSpeedMbps = 875.0,
-            activeSessions = 44,
-            uptimeHours = 1420,
-            operatorName = "Wi-Fi Warp Direct",
-            protocol = VpnProtocol.WIREGUARD_CHACHA20,
-            relayType = RelayTunnelType.SOCKS5,
-            isVerifiedWorking = true
-        ),
-        VpnNode(
-            id = "country-NL",
-            hostName = "nl.opengw.net",
-            ipAddress = "94.142.241.111",
-            port = 1080,
-            countryName = "Netherlands",
-            countryCode = "NL",
-            cityName = "Amsterdam",
-            flagEmoji = "🇳🇱",
-            region = VpnRegion.EUROPE,
-            pingMs = 13,
-            downloadSpeedMbps = 860.0,
-            activeSessions = 38,
-            uptimeHours = 2890,
-            operatorName = "Wi-Fi Warp Direct",
-            protocol = VpnProtocol.WIREGUARD_CHACHA20,
-            relayType = RelayTunnelType.SOCKS5,
-            isVerifiedWorking = true
-        ),
-        VpnNode(
-            id = "country-GB",
-            hostName = "uk.opengw.net",
-            ipAddress = "51.15.43.205",
-            port = 1080,
-            countryName = "United Kingdom",
-            countryCode = "GB",
-            cityName = "London",
-            flagEmoji = "🇬🇧",
-            region = VpnRegion.EUROPE,
-            pingMs = 14,
-            downloadSpeedMbps = 845.0,
-            activeSessions = 39,
-            uptimeHours = 1290,
-            operatorName = "Wi-Fi Warp Direct",
-            protocol = VpnProtocol.WIREGUARD_CHACHA20,
-            relayType = RelayTunnelType.SOCKS5,
-            isVerifiedWorking = true
-        ),
-        VpnNode(
-            id = "country-IN",
-            hostName = "in.opengw.net",
-            ipAddress = "103.152.112.162",
-            port = 8080,
-            countryName = "India",
-            countryCode = "IN",
-            cityName = "Mumbai",
-            flagEmoji = "🇮🇳",
-            region = VpnRegion.ASIA_PACIFIC,
-            pingMs = 8,
-            downloadSpeedMbps = 920.0,
-            activeSessions = 41,
-            uptimeHours = 1540,
-            operatorName = "Wi-Fi Warp Direct",
-            protocol = VpnProtocol.WIREGUARD_CHACHA20,
-            relayType = RelayTunnelType.SOCKS5,
-            isVerifiedWorking = true
-        ),
-        VpnNode(
-            id = "country-CH",
-            hostName = "ch.swisspulse.org",
-            ipAddress = "179.43.146.230",
-            port = 1080,
-            countryName = "Switzerland",
-            countryCode = "CH",
-            cityName = "Zurich",
-            flagEmoji = "🇨🇭",
-            region = VpnRegion.EUROPE,
-            pingMs = 16,
-            downloadSpeedMbps = 820.0,
-            activeSessions = 32,
-            uptimeHours = 3100,
-            operatorName = "Wi-Fi Warp Direct",
-            protocol = VpnProtocol.WIREGUARD_CHACHA20,
-            relayType = RelayTunnelType.SOCKS5,
-            isVerifiedWorking = true
-        ),
-        VpnNode(
-            id = "country-FR",
-            hostName = "fr.opengw.net",
-            ipAddress = "51.158.108.135",
-            port = 1080,
-            countryName = "France",
-            countryCode = "FR",
-            cityName = "Paris",
-            flagEmoji = "🇫🇷",
-            region = VpnRegion.EUROPE,
-            pingMs = 17,
-            downloadSpeedMbps = 805.0,
-            activeSessions = 29,
-            uptimeHours = 1920,
-            operatorName = "Wi-Fi Warp Direct",
-            protocol = VpnProtocol.WIREGUARD_CHACHA20,
-            relayType = RelayTunnelType.SOCKS5,
-            isVerifiedWorking = true
-        ),
-        VpnNode(
-            id = "country-CA",
-            hostName = "ca.opengw.net",
-            ipAddress = "149.56.23.108",
-            port = 1080,
-            countryName = "Canada",
-            countryCode = "CA",
-            cityName = "Toronto",
-            flagEmoji = "🇨🇦",
-            region = VpnRegion.AMERICAS,
-            pingMs = 19,
-            downloadSpeedMbps = 790.0,
-            activeSessions = 24,
-            uptimeHours = 2040,
-            operatorName = "Wi-Fi Warp Direct",
-            protocol = VpnProtocol.WIREGUARD_CHACHA20,
-            relayType = RelayTunnelType.SOCKS5,
-            isVerifiedWorking = true
-        ),
-        VpnNode(
-            id = "country-AU",
-            hostName = "au.opengw.net",
-            ipAddress = "139.99.237.62",
-            port = 1080,
-            countryName = "Australia",
-            countryCode = "AU",
-            cityName = "Sydney",
-            flagEmoji = "🇦🇺",
-            region = VpnRegion.ASIA_PACIFIC,
-            pingMs = 21,
-            downloadSpeedMbps = 770.0,
-            activeSessions = 19,
-            uptimeHours = 1680,
-            operatorName = "Wi-Fi Warp Direct",
-            protocol = VpnProtocol.WIREGUARD_CHACHA20,
-            relayType = RelayTunnelType.SOCKS5,
-            isVerifiedWorking = true
-        ),
-        VpnNode(
-            id = "country-SE",
-            hostName = "se.opengw.net",
-            ipAddress = "185.195.232.74",
-            port = 1080,
-            countryName = "Sweden",
-            countryCode = "SE",
-            cityName = "Stockholm",
-            flagEmoji = "🇸🇪",
-            region = VpnRegion.EUROPE,
-            pingMs = 18,
-            downloadSpeedMbps = 830.0,
-            activeSessions = 21,
-            uptimeHours = 2400,
-            operatorName = "Wi-Fi Warp Direct",
-            protocol = VpnProtocol.WIREGUARD_CHACHA20,
-            relayType = RelayTunnelType.SOCKS5,
-            isVerifiedWorking = true
-        )
-    )
 
     companion object {
         private val KEY_SELECTED_NODE_ID = stringPreferencesKey("selected_node_id")
@@ -763,32 +590,24 @@ class PublicNodeRepository(private val context: Context) {
         private val KEY_FAVORITE_NODES = stringSetPreferencesKey("favorite_node_ids")
         private val KEY_PREFERRED_PROTOCOL = stringPreferencesKey("preferred_protocol")
         private val KEY_DNS_SERVER = stringPreferencesKey("dns_server")
-        private val KEY_SAFE_SPLIT_TUNNEL = booleanPreferencesKey("safe_split_tunnel")
-        private val KEY_AUTO_RECONNECT = booleanPreferencesKey("auto_reconnect")
         private val KEY_DARK_THEME = booleanPreferencesKey("dark_theme")
-
-        fun defaultOpenVpnPreview(
-            ip: String,
-            port: Int,
-            relayType: RelayTunnelType = RelayTunnelType.SOCKS5
-        ): String {
-            return """
-                client
-                dev tun
-                relay-mode ${relayType.name}
-                remote $ip $port
-                strict-tls-ca-verification enabled
-            """.trimIndent()
-        }
+        private val KEY_WIFI_ONLY_LATENCY = booleanPreferencesKey("wifi_only_latency_check")
 
         fun countryCodeToFlagEmoji(countryCode: String): String {
             val clean = countryCode.trim().uppercase(Locale.US)
-            if (clean.length != 2 || !clean[0].isLetter() || !clean[1].isLetter()) {
+            if (clean.length != 2 || clean == "XX" || !clean[0].isLetter() || !clean[1].isLetter()) {
                 return "🌐"
             }
             val firstChar = Character.codePointAt(clean, 0) - 0x41 + 0x1F1E6
             val secondChar = Character.codePointAt(clean, 1) - 0x41 + 0x1F1E6
             return String(Character.toChars(firstChar)) + String(Character.toChars(secondChar))
+        }
+
+        fun countryNameFromCode(countryCode: String): String {
+            val clean = countryCode.trim().uppercase(Locale.US)
+            if (clean.length != 2 || clean == "XX") return "Global Relay"
+            val name = Locale("", clean).getDisplayCountry(Locale.ENGLISH)
+            return if (name.isNullOrBlank()) clean else name
         }
 
         fun mapCountryCodeToRegion(countryCode: String): VpnRegion {
@@ -797,39 +616,6 @@ class PublicNodeRepository(private val context: Context) {
                 "DE", "CH", "NL", "GB", "UK", "FR", "SE", "NO", "FI", "IS", "IT", "ES", "PL", "RO", "CZ", "AT", "IE", "BE", "UA" -> VpnRegion.EUROPE
                 "JP", "KR", "SG", "AU", "NZ", "IN", "TW", "HK", "TH", "VN", "MY", "ID", "PH" -> VpnRegion.ASIA_PACIFIC
                 else -> VpnRegion.MIDDLE_EAST_AFRICA
-            }
-        }
-
-        private fun countryCodeToName(code: String): String {
-            return try {
-                Locale.Builder().setRegion(code).build().getDisplayCountry(Locale.ENGLISH).ifEmpty { code }
-            } catch (_: Exception) {
-                code
-            }
-        }
-
-        private fun inferCityForCountry(code: String, countryName: String): String {
-            return when (code.uppercase(Locale.US)) {
-                "JP" -> "Tokyo"
-                "KR" -> "Seoul"
-                "US" -> "New York"
-                "DE" -> "Frankfurt"
-                "NL" -> "Amsterdam"
-                "GB", "UK" -> "London"
-                "FR" -> "Paris"
-                "SG" -> "Singapore"
-                "CA" -> "Toronto"
-                "CH" -> "Zurich"
-                "SE" -> "Stockholm"
-                "AU" -> "Sydney"
-                "IN" -> "Mumbai"
-                "BR" -> "São Paulo"
-                "IT" -> "Milan"
-                "ES" -> "Madrid"
-                "PL" -> "Warsaw"
-                "FI" -> "Helsinki"
-                "NO" -> "Oslo"
-                else -> countryName
             }
         }
     }

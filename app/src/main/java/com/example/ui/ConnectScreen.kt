@@ -3,7 +3,6 @@ package com.example.ui
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
@@ -13,7 +12,6 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -29,6 +27,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -38,21 +37,26 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
+import androidx.compose.material.icons.filled.BatterySaver
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.LockOpen
-import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.Verified
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -60,16 +64,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -80,28 +80,22 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.model.TunnelConnectionStatus
+import com.example.model.VpnDiagnosticSeverity
 import com.example.model.VpnNode
 import com.example.ui.theme.AmberHandshaking
 import com.example.ui.theme.EmeraldConnected
 import com.example.ui.theme.JetBrainsMonoFontFamily
+import com.example.ui.theme.RoseAlert
 import com.example.ui.theme.SkyBluePrimary
 import java.util.Locale
-import kotlin.math.PI
-import kotlin.math.cos
-import kotlin.math.sin
 
 private val FireOrange = Color(0xFFFF5E1A)
 private val FireGold = Color(0xFFFFB800)
 private val FireCrimson = Color(0xFFFF2A54)
 
 /**
- * Animated GIF-Style Living "A VPN" Logo (`AnimatedGifStyleAVpnLogo`).
- * Uses the exact same 3D Cyber-Fire & Cyan "A" Shield emblem as the App Launcher Icon
- * (`R.drawable.img_avpn_logo_1794127481273`), enhanced with 60 FPS GIF-style motion:
- * - Counter-rotating neon plasma & cyber-fire orbital rings
- * - Breathing 3D shield pulse
- * - Rising glowing flame embers
- * - Diagonal holographic glass laser shine sweep
+ * Ultra-Lightweight "A VPN" Logo (`AnimatedGifStyleAVpnLogo`).
+ * Zero continuous infinite frame loops so TopAppBar & overlays draw at 0% idle CPU/GPU.
  */
 @Composable
 fun AnimatedGifStyleAVpnLogo(
@@ -109,48 +103,6 @@ fun AnimatedGifStyleAVpnLogo(
     cornerRadius: Dp = 13.dp,
     modifier: Modifier = Modifier
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "gif_logo_anim")
-
-    val ringSpin by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2600, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "logo_ring_spin"
-    )
-
-    val flamePulse by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = (2f * PI).toFloat(),
-        animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "logo_flame_pulse"
-    )
-
-    val shieldBreath by infiniteTransition.animateFloat(
-        initialValue = 0.96f,
-        targetValue = 1.05f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(850, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "logo_shield_breath"
-    )
-
-    val shineSweep by infiniteTransition.animateFloat(
-        initialValue = -0.45f,
-        targetValue = 1.45f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1750, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "logo_shine_sweep"
-    )
-
     val shape = RoundedCornerShape(cornerRadius)
     Box(
         contentAlignment = Alignment.Center,
@@ -166,84 +118,18 @@ fun AnimatedGifStyleAVpnLogo(
                 shape = shape
             )
     ) {
-        // 1. Exact App Launcher "A" Shield Emblem with subtle breathing animation
         Image(
             painter = painterResource(id = R.drawable.img_avpn_logo_1794127481273),
             contentDescription = "A VPN Logo",
             contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .fillMaxSize()
-                .scale(shieldBreath)
+            modifier = Modifier.fillMaxSize()
         )
-
-        // 2. 60 FPS GIF-Style Animated Overlay: Rotating Fire/Cyan Rings + Embers + Glass Laser Shine
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val w = this.size.width
-            val h = this.size.height
-            val center = Offset(w / 2f, h / 2f)
-            val radius = (this.size.minDimension / 2f) * 0.88f
-
-            val arcTopLeft = Offset(center.x - radius, center.y - radius)
-            val arcSize = Size(radius * 2f, radius * 2f)
-
-            drawArc(
-                brush = Brush.sweepGradient(
-                    colors = listOf(FireGold, FireOrange, Color.Transparent, SkyBluePrimary, FireGold)
-                ),
-                startAngle = ringSpin,
-                sweepAngle = 95f,
-                useCenter = false,
-                topLeft = arcTopLeft,
-                size = arcSize,
-                style = Stroke(width = w * 0.045f, cap = StrokeCap.Round)
-            )
-            drawArc(
-                color = SkyBluePrimary.copy(alpha = 0.85f),
-                startAngle = ringSpin + 180f,
-                sweepAngle = 85f,
-                useCenter = false,
-                topLeft = arcTopLeft,
-                size = arcSize,
-                style = Stroke(width = w * 0.04f, cap = StrokeCap.Round)
-            )
-
-            // Rising glowing fire sparks
-            for (i in 0 until 4) {
-                val cycle = ((flamePulse / (2f * PI.toFloat())) + i * 0.25f) % 1f
-                val ex = w * (0.22f + i * 0.18f) + sin(flamePulse + i) * (w * 0.03f)
-                val ey = h * (0.86f - cycle * 0.68f)
-                drawCircle(
-                    color = if (i % 2 == 0) {
-                        FireGold.copy(alpha = (1f - cycle) * 0.85f)
-                    } else {
-                        SkyBluePrimary.copy(alpha = (1f - cycle) * 0.85f)
-                    },
-                    radius = w * 0.03f,
-                    center = Offset(ex, ey)
-                )
-            }
-
-            // Diagonal Holographic Glass Shine Sweep
-            val sweepX = w * shineSweep
-            drawLine(
-                brush = Brush.linearGradient(
-                    colors = listOf(
-                        Color.Transparent,
-                        Color.White.copy(alpha = 0.45f),
-                        Color.Transparent
-                    )
-                ),
-                start = Offset(sweepX - w * 0.22f, 0f),
-                end = Offset(sweepX + w * 0.22f, h),
-                strokeWidth = w * 0.14f
-            )
-        }
     }
 }
 
 /**
- * Reusable Ultra-Lightweight iOS Frosted Liquid Glass Card ("iPhone Glass Hi Effect")
- * with diagonal specular glass reflection, inner frosted rim, and smooth Dark/Light mode transition.
+ * Ultra-Lightweight iOS Frosted Glass Card (`IosGlassCard`) using pure Compose gradient fill +
+ * crisp border (zero per-frame Canvas `Path()` allocations during scroll).
  */
 @Composable
 fun IosGlassCard(
@@ -254,83 +140,61 @@ fun IosGlassCard(
     content: @Composable () -> Unit
 ) {
     val shape = RoundedCornerShape(cornerRadius)
-    val topColor by animateColorAsState(
-        targetValue = if (isDark) {
-            Color(0xFF17253F).copy(alpha = 0.68f)
-        } else {
-            Color.White.copy(alpha = 0.78f)
-        },
-        animationSpec = tween(480, easing = FastOutSlowInEasing),
-        label = "glass_top_color"
-    )
-    val bottomColor by animateColorAsState(
-        targetValue = if (isDark) {
-            Color(0xFF0C1526).copy(alpha = 0.54f)
-        } else {
-            Color(0xFFEEF5FF).copy(alpha = 0.62f)
-        },
-        animationSpec = tween(480, easing = FastOutSlowInEasing),
-        label = "glass_bottom_color"
-    )
-
-    val glassFill = Brush.verticalGradient(colors = listOf(topColor, bottomColor))
-
-    val specularBorder = Brush.linearGradient(
-        colors = if (accentGlowColor != null) {
-            listOf(
-                accentGlowColor.copy(alpha = 0.75f),
-                Color.White.copy(alpha = if (isDark) 0.32f else 0.92f),
-                accentGlowColor.copy(alpha = 0.35f)
-            )
-        } else if (isDark) {
-            listOf(
-                Color.White.copy(alpha = 0.34f),
-                Color.White.copy(alpha = 0.08f),
-                SkyBluePrimary.copy(alpha = 0.22f)
+    val glassFill = remember(isDark) {
+        if (isDark) {
+            Brush.verticalGradient(
+                colors = listOf(
+                    Color(0xFF17253F).copy(alpha = 0.72f),
+                    Color(0xFF0C1526).copy(alpha = 0.58f)
+                )
             )
         } else {
-            listOf(
-                Color.White.copy(alpha = 0.98f),
-                Color.White.copy(alpha = 0.52f),
-                SkyBluePrimary.copy(alpha = 0.24f)
+            Brush.verticalGradient(
+                colors = listOf(
+                    Color.White.copy(alpha = 0.84f),
+                    Color(0xFFEEF5FF).copy(alpha = 0.68f)
+                )
             )
         }
-    )
+    }
+
+    val specularBorder = remember(isDark, accentGlowColor) {
+        Brush.linearGradient(
+            colors = if (accentGlowColor != null) {
+                listOf(
+                    accentGlowColor.copy(alpha = 0.70f),
+                    Color.White.copy(alpha = if (isDark) 0.28f else 0.90f),
+                    accentGlowColor.copy(alpha = 0.35f)
+                )
+            } else if (isDark) {
+                listOf(
+                    Color.White.copy(alpha = 0.30f),
+                    Color.White.copy(alpha = 0.08f),
+                    SkyBluePrimary.copy(alpha = 0.20f)
+                )
+            } else {
+                listOf(
+                    Color.White.copy(alpha = 0.96f),
+                    Color.White.copy(alpha = 0.55f),
+                    SkyBluePrimary.copy(alpha = 0.22f)
+                )
+            }
+        )
+    }
 
     Box(
         modifier = modifier
             .clip(shape)
             .background(brush = glassFill, shape = shape)
-            .border(width = 1.2.dp, brush = specularBorder, shape = shape)
+            .border(width = 1.1.dp, brush = specularBorder, shape = shape)
     ) {
-        // Subtle diagonal iOS Frosted Glass Specular Sheen
-        Canvas(modifier = Modifier.matchParentSize()) {
-            val sheenPath = Path().apply {
-                moveTo(0f, 0f)
-                lineTo(size.width * 0.65f, 0f)
-                lineTo(size.width * 0.25f, size.height)
-                lineTo(0f, size.height)
-                close()
-            }
-            drawPath(
-                path = sheenPath,
-                brush = Brush.linearGradient(
-                    colors = listOf(
-                        Color.White.copy(alpha = if (isDark) 0.06f else 0.26f),
-                        Color.Transparent
-                    ),
-                    start = Offset.Zero,
-                    end = Offset(size.width * 0.6f, size.height * 0.6f)
-                )
-            )
-        }
         content()
     }
 }
 
 /**
- * Compact Animated Glass Pill Button with spring press feedback, generous inner padding,
- * outer margin support, and short crisp single-line typography.
+ * Lightweight Pill Button with spring press feedback, generous inner padding,
+ * single-line crisp typography (`softWrap = false`), and 48dp accessible height.
  */
 @Composable
 fun AnimatedGlassActionPillButton(
@@ -347,30 +211,19 @@ fun AnimatedGlassActionPillButton(
     val isPressed by interactionSource.collectIsPressedAsState()
 
     val pressScale by animateFloatAsState(
-        targetValue = if (isPressed) 0.95f else 1.0f,
+        targetValue = if (isPressed) 0.96f else 1.0f,
         animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
+            dampingRatio = Spring.DampingRatioNoBouncy,
             stiffness = Spring.StiffnessMedium
         ),
         label = "pill_press_scale"
-    )
-
-    val infiniteTransition = rememberInfiniteTransition(label = "btn_shimmer")
-    val borderGlowAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.45f,
-        targetValue = 0.90f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1300, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "btn_border_glow"
     )
 
     val bgBrush = if (isPrimaryFilled) {
         Brush.horizontalGradient(
             colors = listOf(
                 accentColor,
-                accentColor.copy(alpha = 0.84f)
+                accentColor.copy(alpha = 0.86f)
             )
         )
     } else {
@@ -378,42 +231,30 @@ fun AnimatedGlassActionPillButton(
             colors = if (isDark) {
                 listOf(
                     accentColor.copy(alpha = 0.20f),
-                    Color(0xFF13223A).copy(alpha = 0.72f)
+                    Color(0xFF13223A).copy(alpha = 0.74f)
                 )
             } else {
                 listOf(
-                    Color.White.copy(alpha = 0.88f),
+                    Color.White.copy(alpha = 0.90f),
                     accentColor.copy(alpha = 0.14f)
                 )
             }
         )
     }
 
-    val fgColor = if (isPrimaryFilled) {
-        Color.White
-    } else if (isDark) {
-        Color.White
-    } else {
-        accentColor
-    }
-
+    val fgColor = if (isPrimaryFilled || isDark) Color.White else accentColor
     val shape = RoundedCornerShape(16.dp)
 
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
             .scale(pressScale)
-            .height(44.dp)
+            .heightIn(min = 48.dp)
             .clip(shape)
             .background(brush = bgBrush, shape = shape)
             .border(
                 width = 1.2.dp,
-                brush = Brush.linearGradient(
-                    colors = listOf(
-                        accentColor.copy(alpha = borderGlowAlpha),
-                        Color.White.copy(alpha = if (isDark) 0.30f else 0.85f)
-                    )
-                ),
+                color = accentColor.copy(alpha = 0.58f),
                 shape = shape
             )
             .clickable(
@@ -421,7 +262,7 @@ fun AnimatedGlassActionPillButton(
                 indication = null,
                 onClick = onClick
             )
-            .padding(horizontal = 14.dp, vertical = 8.dp)
+            .padding(horizontal = 20.dp, vertical = 12.dp)
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -429,7 +270,7 @@ fun AnimatedGlassActionPillButton(
         ) {
             if (isLoading) {
                 CircularProgressIndicator(
-                    modifier = Modifier.size(15.dp),
+                    modifier = Modifier.size(16.dp),
                     strokeWidth = 2.dp,
                     color = fgColor
                 )
@@ -438,18 +279,19 @@ fun AnimatedGlassActionPillButton(
                     imageVector = icon,
                     contentDescription = null,
                     tint = fgColor,
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(17.dp)
                 )
             }
-            Spacer(modifier = Modifier.width(6.dp))
+            Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = text,
                 style = MaterialTheme.typography.labelLarge.copy(
                     fontWeight = FontWeight.Bold,
-                    fontSize = 12.sp
+                    fontSize = 13.sp
                 ),
                 color = fgColor,
                 maxLines = 1,
+                softWrap = false,
                 overflow = TextOverflow.Ellipsis
             )
         }
@@ -457,11 +299,8 @@ fun AnimatedGlassActionPillButton(
 }
 
 /**
- * Lightweight iPhone Glassmorphic Connect Screen for **A VPN** with:
- * - Animated Liquid-Glass & Blazing Fire Connect Button (`FireConnectOrb`)
- * - Compact, short-text Glass Action Buttons (`"⚡ Fast Connect"` & `"📌 Status Bar"`) with proper margins/padding
- * - Real-Time Live Telemetry & Speed Indicator (`RealtimeLiveIndicatorPill`)
- * - Prominent Developer Credits Card ("Made with love by Ashir ♥️")
+ * Ultra-Light Frosted Glass Connect Screen for **A VPN** with zero idle frame ticks,
+ * spacious button padding, and direct troubleshooting jump to Connection Log.
  */
 @Composable
 fun ConnectScreen(
@@ -469,7 +308,10 @@ fun ConnectScreen(
     onToggleConnection: () -> Unit,
     onConnectSmartFastest: () -> Unit,
     onOpenNodeSelector: () -> Unit,
+    onClearDiagnostics: () -> Unit = {},
+    onOpenConnectionLogs: () -> Unit = {},
     onOpenDeveloperCredits: () -> Unit = {},
+    onToggleWifiOnlyLatency: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val status = uiState.telemetry.status
@@ -477,19 +319,21 @@ fun ConnectScreen(
     val isConnecting = status == TunnelConnectionStatus.CONNECTING
     val isDark = uiState.preferences.isDarkTheme
 
-    val displayNode = if (!uiState.isAutoFastestMode) {
-        uiState.telemetry.activeNode?.takeIf {
-            it.countryCode.equals(uiState.selectedNode.countryCode, ignoreCase = true)
-        } ?: uiState.selectedNode
+    val displayNode = if (isConnected || isConnecting) {
+        uiState.telemetry.activeNode ?: uiState.selectedNode
+    } else if (!uiState.isAutoFastestMode) {
+        uiState.selectedNode
     } else {
         uiState.telemetry.activeNode ?: uiState.selectedNode
     }
-    val exitCountry = if (!uiState.isAutoFastestMode) {
-        uiState.selectedNode.countryName
-    } else {
+    val exitCountry = if (isConnected || isConnecting) {
         uiState.telemetry.verifiedExitCountry ?: displayNode.countryName
+    } else {
+        displayNode.countryName
     }
-    val liveExitIp = uiState.telemetry.verifiedExitIp ?: displayNode.ipAddress
+    val liveExitIp = uiState.telemetry.verifiedExitIp
+        ?: displayNode.verifiedExitIp.ifEmpty { displayNode.ipAddress.ifEmpty { "Pending" } }
+    val directIp = uiState.telemetry.deviceDirectIp
 
     LazyColumn(
         modifier = modifier
@@ -499,7 +343,7 @@ fun ConnectScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // 1. Hero iPhone Frosted Glass Card
+        // 1. Hero Frosted Glass Card
         item {
             IosGlassCard(
                 isDark = isDark,
@@ -511,7 +355,7 @@ fun ConnectScreen(
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .widthIn(max = 560.dp)
+                    .widthIn(max = 600.dp)
             ) {
                 Box(modifier = Modifier.fillMaxWidth()) {
                     Image(
@@ -519,9 +363,9 @@ fun ConnectScreen(
                         contentDescription = null,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(195.dp),
+                            .height(190.dp),
                         contentScale = ContentScale.Crop,
-                        alpha = if (isDark) 0.12f else 0.20f
+                        alpha = if (isDark) 0.10f else 0.18f
                     )
 
                     Column(
@@ -530,7 +374,6 @@ fun ConnectScreen(
                             .padding(horizontal = 18.dp, vertical = 18.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        // Top Row: Connection Status Badge + Real-Time Live Indicator
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -550,9 +393,8 @@ fun ConnectScreen(
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(14.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
 
-                        // Central Animated Liquid-Glass & Cyber-Fire Connect Button
                         FireConnectOrb(
                             status = status,
                             isDark = isDark,
@@ -589,7 +431,7 @@ fun ConnectScreen(
                                             )
                                             Spacer(modifier = Modifier.width(4.dp))
                                             Text(
-                                                text = "${displayNode.flagEmoji} $exitCountry • Wi-Fi Warp",
+                                                text = "${displayNode.flagEmoji} $exitCountry • TUN0 Active",
                                                 style = MaterialTheme.typography.titleMedium.copy(
                                                     fontWeight = FontWeight.Bold
                                                 ),
@@ -597,27 +439,54 @@ fun ConnectScreen(
                                                 textAlign = TextAlign.Center
                                             )
                                         }
+                                        val pingLabel = if (displayNode.pingMs > 0) "${displayNode.pingMs} ms" else "Live…"
                                         Spacer(modifier = Modifier.height(2.dp))
+                                        val ipRouteText = if (!directIp.isNullOrBlank() && directIp != liveExitIp) {
+                                            "$directIp → Exit: $liveExitIp • ⚡ $pingLabel"
+                                        } else {
+                                            "Verified Exit IP: $liveExitIp • ⚡ $pingLabel"
+                                        }
                                         Text(
-                                            text = "IP: $liveExitIp • ⚡ ${displayNode.pingMs} ms Live • All Apps Active",
+                                            text = ipRouteText,
                                             style = MaterialTheme.typography.labelSmall.copy(
                                                 fontFamily = JetBrainsMonoFontFamily
                                             ),
-                                            color = EmeraldConnected
+                                            color = EmeraldConnected,
+                                            textAlign = TextAlign.Center
                                         )
                                     }
 
                                     TunnelConnectionStatus.CONNECTING -> {
+                                        val pingLabel = if (displayNode.pingMs > 0) "${displayNode.pingMs} ms" else "Verifying…"
                                         Text(
-                                            text = "Starting Wi-Fi Warp…",
+                                            text = "Verifying TLS & Starting TUN0…",
                                             style = MaterialTheme.typography.titleLarge.copy(
                                                 fontWeight = FontWeight.Bold
                                             ),
-                                            color = FireOrange
+                                            color = FireOrange,
+                                            textAlign = TextAlign.Center
                                         )
                                         Spacer(modifier = Modifier.height(3.dp))
                                         Text(
-                                            text = "${displayNode.flagEmoji} ${displayNode.countryName} • ${displayNode.pingMs} ms",
+                                            text = "${displayNode.flagEmoji} ${displayNode.countryName} • $pingLabel",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+
+                                    TunnelConnectionStatus.ERROR -> {
+                                        Text(
+                                            text = "Tunnel Error",
+                                            style = MaterialTheme.typography.headlineMedium.copy(
+                                                fontWeight = FontWeight.Bold
+                                            ),
+                                            color = RoseAlert,
+                                            textAlign = TextAlign.Center
+                                        )
+                                        Spacer(modifier = Modifier.height(3.dp))
+                                        Text(
+                                            text = uiState.telemetry.errorMessage ?: "Select another server or view Connection Log",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             textAlign = TextAlign.Center
@@ -625,6 +494,7 @@ fun ConnectScreen(
                                     }
 
                                     else -> {
+                                        val pingLabel = if (displayNode.pingMs > 0) "${displayNode.pingMs} ms" else "Scanning…"
                                         Text(
                                             text = if (uiState.isAutoFastestMode) {
                                                 "Tap Orb to Connect"
@@ -638,8 +508,13 @@ fun ConnectScreen(
                                             textAlign = TextAlign.Center
                                         )
                                         Spacer(modifier = Modifier.height(3.dp))
+                                        val standbySubtitle = if (displayNode.ipAddress.isBlank()) {
+                                            "Scanning TLS-verified relays…"
+                                        } else {
+                                            "${displayNode.flagEmoji} ${displayNode.countryName} • ⚡ $pingLabel • ${displayNode.relayType.badgeLabel}"
+                                        }
                                         Text(
-                                            text = "${displayNode.flagEmoji} ${displayNode.countryName} • ⚡ ${displayNode.pingMs} ms Live • Wi-Fi Warp",
+                                            text = standbySubtitle,
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             textAlign = TextAlign.Center
@@ -649,9 +524,8 @@ fun ConnectScreen(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(modifier = Modifier.height(18.dp))
 
-                        // Compact Animated Glass Fast Connect Pill Button with clean margins & padding
                         AnimatedGlassActionPillButton(
                             text = if (uiState.isSyncingApi) {
                                 "Syncing…"
@@ -667,8 +541,7 @@ fun ConnectScreen(
                             isLoading = uiState.isSyncingApi,
                             onClick = onConnectSmartFastest,
                             modifier = Modifier
-                                .fillMaxWidth(0.76f)
-                                .padding(horizontal = 4.dp)
+                                .fillMaxWidth(0.82f)
                                 .testTag("smart_fastest_button")
                         )
                     }
@@ -676,7 +549,21 @@ fun ConnectScreen(
             }
         }
 
-        // 2. iPhone Glass Selected Country Selector Card
+        // Surface full error diagnostics immediately on hard ERROR
+        if (status == TunnelConnectionStatus.ERROR) {
+            item {
+                VpnDiagnosticPanel(
+                    telemetry = uiState.telemetry,
+                    isDark = isDark,
+                    onClearDiagnostics = onClearDiagnostics,
+                    onRetryFastSwitch = onConnectSmartFastest,
+                    onBrowseServers = onOpenNodeSelector,
+                    onOpenFullLogs = onOpenConnectionLogs
+                )
+            }
+        }
+
+        // 2. Selected Server Card
         item {
             SelectedCountryGlassCard(
                 node = displayNode,
@@ -686,12 +573,12 @@ fun ConnectScreen(
             )
         }
 
-        // 3. Real-Time Download & Upload iPhone Glass Cards
+        // 3. Download & Upload Cards
         item {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .widthIn(max = 560.dp),
+                    .widthIn(max = 600.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 TelemetryGlassCard(
@@ -723,7 +610,30 @@ fun ConnectScreen(
             }
         }
 
-        // 4. Dedicated Developer Credits Glass Card ("Made with love by Ashir ♥️")
+        // 4. WorkManager Battery Optimization Setting (Wi-Fi Only Latency Checks)
+        item {
+            BatteryOptimizationSettingCard(
+                wifiOnly = uiState.preferences.wifiOnlyLatencyCheck,
+                isDark = isDark,
+                onToggle = onToggleWifiOnlyLatency
+            )
+        }
+
+        // 5. Lightweight Connection Log Quick Shortcut Card
+        item {
+            ConnectionLogShortcutCard(
+                logCount = uiState.telemetry.diagnosticLogs.size,
+                issueCount = uiState.telemetry.diagnosticLogs.count {
+                    it.severity == VpnDiagnosticSeverity.ERROR || it.severity == VpnDiagnosticSeverity.WARNING
+                },
+                latestSummary = uiState.telemetry.lastFailureStage
+                    ?: uiState.telemetry.handshakeSummary.ifBlank { "Tap to inspect handshake logs" },
+                isDark = isDark,
+                onClick = onOpenConnectionLogs
+            )
+        }
+
+        // 6. Developer Credits Banner ("Made with love by Ashir ♥️")
         item {
             DeveloperCreditsGlassBanner(
                 isDark = isDark,
@@ -733,9 +643,220 @@ fun ConnectScreen(
     }
 }
 
-/**
- * Prominent iPhone Glass Developer Credit Banner honoring Ashir ♥️.
- */
+@Composable
+fun BatteryOptimizationSettingCard(
+    wifiOnly: Boolean,
+    isDark: Boolean,
+    onToggle: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val accent = if (wifiOnly) EmeraldConnected else SkyBluePrimary
+    IosGlassCard(
+        isDark = isDark,
+        cornerRadius = 20.dp,
+        accentGlowColor = if (wifiOnly) EmeraldConnected else null,
+        modifier = modifier
+            .fillMaxWidth()
+            .widthIn(max = 600.dp)
+            .clickable { onToggle(!wifiOnly) }
+            .testTag("battery_optimization_card")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = accent.copy(alpha = 0.16f),
+                border = BorderStroke(1.dp, accent.copy(alpha = 0.40f)),
+                modifier = Modifier.size(38.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = if (wifiOnly) Icons.Default.Wifi else Icons.Default.BatterySaver,
+                        contentDescription = null,
+                        tint = accent,
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+            }
+
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.battery_opt_title),
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = accent.copy(alpha = 0.16f)
+                    ) {
+                        Text(
+                            text = if (wifiOnly) "Wi-Fi Only" else "All Nets",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 10.sp
+                            ),
+                            color = accent,
+                            maxLines = 1,
+                            softWrap = false,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = stringResource(
+                        if (wifiOnly) R.string.battery_opt_subtitle_wifi else R.string.battery_opt_subtitle_all
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Switch(
+                checked = wifiOnly,
+                onCheckedChange = onToggle,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White,
+                    checkedTrackColor = EmeraldConnected,
+                    uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+                ),
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag("wifi_only_latency_switch")
+            )
+        }
+    }
+}
+
+@Composable
+private fun ConnectionLogShortcutCard(
+    logCount: Int,
+    issueCount: Int,
+    latestSummary: String,
+    isDark: Boolean,
+    onClick: () -> Unit
+) {
+    val accent = if (issueCount > 0) AmberHandshaking else SkyBluePrimary
+    IosGlassCard(
+        isDark = isDark,
+        cornerRadius = 20.dp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .widthIn(max = 600.dp)
+            .clickable(onClick = onClick)
+            .testTag("open_connection_log_card")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = accent.copy(alpha = 0.16f),
+                border = BorderStroke(1.dp, accent.copy(alpha = 0.40f)),
+                modifier = Modifier.size(36.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.Terminal,
+                        contentDescription = "Connection Log",
+                        tint = accent,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Connection Log",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = accent.copy(alpha = 0.16f)
+                    ) {
+                        Text(
+                            text = if (issueCount > 0) "$issueCount alert" else "$logCount logs",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 10.sp
+                            ),
+                            color = accent,
+                            maxLines = 1,
+                            softWrap = false,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+                Text(
+                    text = latestSummary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = SkyBluePrimary.copy(alpha = 0.14f),
+                border = BorderStroke(1.dp, SkyBluePrimary.copy(alpha = 0.35f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "View",
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = SkyBluePrimary
+                        ),
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
+                        contentDescription = "View Connection Log",
+                        tint = SkyBluePrimary,
+                        modifier = Modifier.size(11.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun DeveloperCreditsGlassBanner(
     isDark: Boolean,
@@ -748,7 +869,7 @@ fun DeveloperCreditsGlassBanner(
         accentGlowColor = FireOrange,
         modifier = modifier
             .fillMaxWidth()
-            .widthIn(max = 560.dp)
+            .widthIn(max = 600.dp)
             .clickable(onClick = onClick)
             .testTag("developer_credits_card")
     ) {
@@ -759,7 +880,10 @@ fun DeveloperCreditsGlassBanner(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
+            ) {
                 Surface(
                     shape = CircleShape,
                     color = FireCrimson.copy(alpha = 0.16f),
@@ -783,7 +907,9 @@ fun DeveloperCreditsGlassBanner(
                             style = MaterialTheme.typography.titleMedium.copy(
                                 fontWeight = FontWeight.Bold
                             ),
-                            color = MaterialTheme.colorScheme.onSurface
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Spacer(modifier = Modifier.width(5.dp))
                         Icon(
@@ -795,8 +921,10 @@ fun DeveloperCreditsGlassBanner(
                     }
                     Text(
                         text = "Creator & Lead Architect • Tap for Info",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -811,9 +939,6 @@ fun DeveloperCreditsGlassBanner(
     }
 }
 
-/**
- * Real-Time Live Indicator Pill showing pulsing status dot, animated wave bars, and live speed/ping.
- */
 @Composable
 private fun RealtimeLiveIndicatorPill(
     isConnected: Boolean,
@@ -822,26 +947,6 @@ private fun RealtimeLiveIndicatorPill(
     uploadKbps: Double,
     pingMs: Int
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "realtime_live_pulse")
-    val dotAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.35f,
-        targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(650, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "live_dot_alpha"
-    )
-    val wavePhase by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = (2f * PI).toFloat(),
-        animationSpec = infiniteRepeatable(
-            animation = tween(900, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "live_wave_phase"
-    )
-
     val activeColor = when {
         isConnected -> EmeraldConnected
         isConnecting -> FireOrange
@@ -849,10 +954,11 @@ private fun RealtimeLiveIndicatorPill(
     }
 
     val totalSpeedKbps = downloadKbps + uploadKbps
+    val pingDisplay = if (pingMs > 0) "$pingMs ms" else "Live…"
     val liveText = when {
-        isConnected -> String.format(Locale.US, "LIVE • %.0f kbps • %d ms", totalSpeedKbps, pingMs)
-        isConnecting -> "SYNC • $pingMs ms"
-        else -> "READY • $pingMs ms"
+        isConnected -> String.format(Locale.US, "LIVE • %.0f kbps • %s", totalSpeedKbps, pingDisplay)
+        isConnecting -> "SYNC • $pingDisplay"
+        else -> "READY • $pingDisplay"
     }
 
     Surface(
@@ -870,33 +976,8 @@ private fun RealtimeLiveIndicatorPill(
                 modifier = Modifier
                     .size(7.dp)
                     .clip(CircleShape)
-                    .background(
-                        activeColor.copy(
-                            alpha = if (isConnected || isConnecting) dotAlpha else 0.75f
-                        )
-                    )
+                    .background(activeColor)
             )
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
-                modifier = Modifier.height(11.dp)
-            ) {
-                for (i in 0..2) {
-                    val dynamicFactor = if (isConnected || isConnecting) {
-                        0.45f + 0.55f * ((sin(wavePhase + i * 1.3f) + 1f) / 2f)
-                    } else {
-                        0.4f + (i * 0.2f)
-                    }
-                    Box(
-                        modifier = Modifier
-                            .width(2.5.dp)
-                            .height((11f * dynamicFactor).dp)
-                            .clip(CircleShape)
-                            .background(activeColor)
-                    )
-                }
-            }
 
             Text(
                 text = liveText,
@@ -906,7 +987,8 @@ private fun RealtimeLiveIndicatorPill(
                     fontSize = 10.sp
                 ),
                 color = activeColor,
-                maxLines = 1
+                maxLines = 1,
+                softWrap = false
             )
         }
     }
@@ -968,19 +1050,20 @@ private fun StatusPillBadge(
                     fontSize = 10.sp
                 ),
                 color = contentColor,
-                maxLines = 1
+                maxLines = 1,
+                softWrap = false
             )
         }
     }
 }
 
 /**
- * Central Animated Liquid-Glass & Cyber-Fire Connect Button (`FireConnectOrb`).
- * Features continuous 60 FPS orbital arcs, liquid wave rings, tactile spring press animation,
- * and crisp compact button text.
+ * Ultra-Light Central Frosted Glass Connect Orb (`FireConnectOrb`).
+ * Zero continuous idle loops when disconnected/connected; mounts a subtle pulse transition
+ * ONLY while [status] == [TunnelConnectionStatus.CONNECTING].
  */
 @Composable
-private fun FireConnectOrb(
+fun FireConnectOrb(
     status: TunnelConnectionStatus,
     isDark: Boolean,
     onClick: () -> Unit
@@ -992,252 +1075,113 @@ private fun FireConnectOrb(
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
 
-    val infiniteTransition = rememberInfiniteTransition(label = "fire_orb_transition")
-
-    val flamePhase by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = (2f * PI).toFloat(),
-        animationSpec = infiniteRepeatable(
-            animation = tween(
-                durationMillis = if (isConnecting) 850 else 1500,
-                easing = LinearEasing
-            ),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "flame_phase"
-    )
-
-    val ringSpin by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(
-                durationMillis = if (isConnecting) 1200 else 2800,
-                easing = LinearEasing
-            ),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "orb_ring_spin"
-    )
-
-    val emberRise by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(
-                durationMillis = if (isConnecting) 800 else 1350,
-                easing = LinearEasing
-            ),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "ember_rise"
-    )
-
-    val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 0.98f,
-        targetValue = if (isFireActive) 1.09f else 1.04f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(
-                durationMillis = if (isConnecting) 600 else 1400,
-                easing = FastOutSlowInEasing
-            ),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "orb_pulse_scale"
-    )
-
     val pressScale by animateFloatAsState(
         targetValue = when {
-            isPressed -> 0.92f
+            isPressed -> 0.94f
             isConnected -> 1.03f
             else -> 1.0f
         },
         animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
+            dampingRatio = Spring.DampingRatioNoBouncy,
             stiffness = Spring.StiffnessMedium
         ),
         label = "orb_spring"
     )
 
+    val haloColor = when {
+        isConnected -> FireOrange
+        isConnecting -> AmberHandshaking
+        else -> SkyBluePrimary
+    }
+
+    val orbGradient = when {
+        isConnected -> Brush.linearGradient(listOf(FireGold, FireOrange, FireCrimson))
+        isConnecting -> Brush.linearGradient(listOf(FireOrange, AmberHandshaking, FireGold))
+        isDark -> Brush.linearGradient(listOf(Color(0xFF152744), Color(0xFF0E1B31), SkyBluePrimary.copy(alpha = 0.85f)))
+        else -> Brush.linearGradient(listOf(SkyBluePrimary, Color(0xFF0284C7), Color(0xFF2563EB)))
+    }
+
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .size(182.dp)
+            .size(164.dp)
             .scale(pressScale)
     ) {
-        Canvas(
+        var buttonPulseScale = 1f
+
+        // Subtle pulse transition mounted strictly during CONNECTING state (0 idle frames otherwise)
+        if (isConnecting) {
+            val pulseTransition = rememberInfiniteTransition(label = "connecting_orb_pulse")
+            val haloPulseScale by pulseTransition.animateFloat(
+                initialValue = 0.94f,
+                targetValue = 1.15f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(durationMillis = 1100, easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Restart
+                ),
+                label = "connecting_pulse_scale"
+            )
+            val haloPulseAlpha by pulseTransition.animateFloat(
+                initialValue = 0.55f,
+                targetValue = 0.05f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(durationMillis = 1100, easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Restart
+                ),
+                label = "connecting_pulse_alpha"
+            )
+            val orbBreath by pulseTransition.animateFloat(
+                initialValue = 0.97f,
+                targetValue = 1.03f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(durationMillis = 900, easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "connecting_orb_breath"
+            )
+            buttonPulseScale = orbBreath
+
+            Box(
+                modifier = Modifier
+                    .size(156.dp)
+                    .scale(haloPulseScale)
+                    .clip(CircleShape)
+                    .background(AmberHandshaking.copy(alpha = haloPulseAlpha * 0.28f))
+                    .border(
+                        width = 2.dp,
+                        color = AmberHandshaking.copy(alpha = haloPulseAlpha),
+                        shape = CircleShape
+                    )
+                    .testTag("connecting_pulse_ring")
+            )
+        }
+
+        // Lightweight outer static ring halo
+        Box(
             modifier = Modifier
-                .fillMaxSize()
-                .scale(pulseScale)
-        ) {
-            val center = Offset(size.width / 2f, size.height / 2f)
-            val baseRadius = size.minDimension * 0.35f
-
-            if (isFireActive) {
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            FireGold.copy(alpha = 0.42f),
-                            FireOrange.copy(alpha = 0.28f),
-                            FireCrimson.copy(alpha = 0.12f),
-                            Color.Transparent
-                        ),
-                        center = center,
-                        radius = size.minDimension * 0.50f
-                    ),
-                    radius = size.minDimension * 0.50f,
-                    center = center
+                .size(156.dp)
+                .clip(CircleShape)
+                .background(haloColor.copy(alpha = if (isFireActive) 0.14f else 0.08f))
+                .border(
+                    width = 1.5.dp,
+                    color = haloColor.copy(alpha = if (isFireActive) 0.45f else 0.28f),
+                    shape = CircleShape
                 )
-
-                val flamePathOuter = Path()
-                val flamePathInner = Path()
-                val steps = 64
-                for (i in 0..steps) {
-                    val angle = (i.toFloat() / steps) * (2f * PI.toFloat())
-                    val upwardLift = ((-sin(angle) + 1f) * 0.5f) * 12.dp.toPx()
-                    val wave1 = sin(angle * 7f + flamePhase * 2f) * 6.dp.toPx()
-                    val wave2 = cos(angle * 11f - flamePhase * 3f) * 4.dp.toPx()
-                    val rOuter = baseRadius + 12.dp.toPx() + upwardLift + wave1 + wave2
-                    val rInner = baseRadius + 6.dp.toPx() + (upwardLift * 0.55f) + (wave1 * 0.6f)
-
-                    val xOut = center.x + rOuter * cos(angle)
-                    val yOut = center.y + rOuter * sin(angle)
-                    val xIn = center.x + rInner * cos(angle)
-                    val yIn = center.y + rInner * sin(angle)
-
-                    if (i == 0) {
-                        flamePathOuter.moveTo(xOut, yOut)
-                        flamePathInner.moveTo(xIn, yIn)
-                    } else {
-                        flamePathOuter.lineTo(xOut, yOut)
-                        flamePathInner.lineTo(xIn, yIn)
-                    }
-                }
-                flamePathOuter.close()
-                flamePathInner.close()
-
-                drawPath(
-                    path = flamePathOuter,
-                    brush = Brush.verticalGradient(
-                        colors = listOf(
-                            FireGold.copy(alpha = 0.55f),
-                            FireOrange.copy(alpha = 0.45f),
-                            FireCrimson.copy(alpha = 0.35f)
-                        )
-                    )
-                )
-                drawPath(
-                    path = flamePathInner,
-                    brush = Brush.verticalGradient(
-                        colors = listOf(
-                            Color.White.copy(alpha = 0.55f),
-                            FireGold.copy(alpha = 0.50f),
-                            FireOrange.copy(alpha = 0.40f)
-                        )
-                    )
-                )
-
-                for (sparkIdx in 0 until 10) {
-                    val seedAngle = (sparkIdx / 10f) * (2f * PI.toFloat()) + (flamePhase * 0.3f)
-                    val progress = (emberRise + (sparkIdx * 0.13f)) % 1f
-                    val sparkRadiusOffset = baseRadius + (progress * 28.dp.toPx())
-                    val sparkX = center.x + cos(seedAngle) * (sparkRadiusOffset * 0.85f)
-                    val sparkY = center.y + sin(seedAngle) * (sparkRadiusOffset * 0.85f) - (progress * 22.dp.toPx())
-                    val sparkAlpha = (1f - progress).coerceIn(0f, 1f)
-
-                    drawCircle(
-                        color = if (sparkIdx % 2 == 0) {
-                            FireGold.copy(alpha = sparkAlpha * 0.85f)
-                        } else {
-                            FireOrange.copy(alpha = sparkAlpha * 0.75f)
-                        },
-                        radius = (3.2f * (1f - progress * 0.5f)).dp.toPx(),
-                        center = Offset(sparkX, sparkY)
-                    )
-                }
-            } else {
-                // Animated Liquid-Glass Orbital Rings even in Standby mode!
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            SkyBluePrimary.copy(alpha = 0.28f),
-                            SkyBluePrimary.copy(alpha = 0.08f),
-                            Color.Transparent
-                        ),
-                        center = center,
-                        radius = size.minDimension * 0.48f
-                    ),
-                    radius = size.minDimension * 0.48f,
-                    center = center
-                )
-
-                val orbitR = baseRadius + 12.dp.toPx()
-                val arcTopLeft = Offset(center.x - orbitR, center.y - orbitR)
-                val arcSize = Size(orbitR * 2f, orbitR * 2f)
-                for (seg in 0 until 3) {
-                    drawArc(
-                        brush = Brush.sweepGradient(
-                            colors = listOf(
-                                SkyBluePrimary.copy(alpha = 0.75f),
-                                EmeraldConnected.copy(alpha = 0.55f),
-                                Color.Transparent
-                            )
-                        ),
-                        startAngle = ringSpin + seg * 120f,
-                        sweepAngle = 70f,
-                        useCenter = false,
-                        topLeft = arcTopLeft,
-                        size = arcSize,
-                        style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
-                    )
-                }
-            }
-        }
-
-        // Core Interactive Frosted Glass Orb Button
-        val orbGradient = when {
-            isConnected -> Brush.linearGradient(
-                colors = listOf(
-                    FireGold,
-                    FireOrange,
-                    FireCrimson
-                )
-            )
-            isConnecting -> Brush.linearGradient(
-                colors = listOf(
-                    FireOrange,
-                    AmberHandshaking,
-                    FireGold
-                )
-            )
-            isDark -> Brush.linearGradient(
-                colors = listOf(
-                    Color(0xFF152744),
-                    Color(0xFF0E1B31),
-                    SkyBluePrimary.copy(alpha = 0.85f)
-                )
-            )
-            else -> Brush.linearGradient(
-                colors = listOf(
-                    SkyBluePrimary,
-                    Color(0xFF0284C7),
-                    Color(0xFF2563EB)
-                )
-            )
-        }
+        )
 
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
                 .size(128.dp)
+                .scale(buttonPulseScale)
                 .clip(CircleShape)
                 .background(brush = orbGradient, shape = CircleShape)
                 .border(
-                    width = 2.8.dp,
+                    width = 2.5.dp,
                     brush = Brush.linearGradient(
                         colors = listOf(
                             Color.White.copy(alpha = 0.90f),
-                            if (isFireActive) FireGold else SkyBluePrimary.copy(alpha = 0.5f)
+                            if (isFireActive) FireGold else SkyBluePrimary.copy(alpha = 0.55f)
                         )
                     ),
                     shape = CircleShape
@@ -1252,26 +1196,10 @@ private fun FireConnectOrb(
                 }
                 .testTag("primary_connect_orb_button")
         ) {
-            // Specular glass highlight inside the orb
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                drawCircle(
-                    brush = Brush.verticalGradient(
-                        colors = listOf(
-                            Color.White.copy(alpha = 0.32f),
-                            Color.Transparent
-                        ),
-                        startY = 0f,
-                        endY = size.height * 0.55f
-                    ),
-                    radius = size.minDimension * 0.46f,
-                    center = Offset(size.width / 2f, size.height * 0.38f)
-                )
-            }
-
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
-                modifier = Modifier.padding(12.dp)
+                modifier = Modifier.padding(14.dp)
             ) {
                 if (isConnecting) {
                     CircularProgressIndicator(
@@ -1291,7 +1219,7 @@ private fun FireConnectOrb(
                         modifier = Modifier.size(38.dp)
                     )
                 }
-                Spacer(modifier = Modifier.height(5.dp))
+                Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     text = when {
                         isConnected -> "ACTIVE"
@@ -1302,9 +1230,10 @@ private fun FireConnectOrb(
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
                         fontSize = 11.sp,
-                        letterSpacing = 1.1.sp
+                        letterSpacing = 0.8.sp
                     ),
-                    maxLines = 1
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
         }
@@ -1323,7 +1252,7 @@ private fun SelectedCountryGlassCard(
         cornerRadius = 22.dp,
         modifier = Modifier
             .fillMaxWidth()
-            .widthIn(max = 560.dp)
+            .widthIn(max = 600.dp)
             .clickable(onClick = onOpenNodeList)
             .testTag("selected_node_selector_card")
     ) {
@@ -1351,7 +1280,7 @@ private fun SelectedCountryGlassCard(
             Column(modifier = Modifier.weight(1f)) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
                         text = node.countryName,
@@ -1359,7 +1288,8 @@ private fun SelectedCountryGlassCard(
                             fontWeight = FontWeight.Bold
                         ),
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
 
                     Surface(
@@ -1376,15 +1306,25 @@ private fun SelectedCountryGlassCard(
                                 fontWeight = FontWeight.Bold,
                                 color = if (isAutoMode) SkyBluePrimary else FireOrange
                             ),
-                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                            maxLines = 1,
+                            softWrap = false,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                         )
                     }
                 }
 
                 Spacer(modifier = Modifier.height(2.dp))
 
+                val cardPing = if (node.pingMs > 0) "${node.pingMs} ms" else "Scanning…"
+                val endpointSub = if (node.verifiedExitIp.isNotEmpty()) {
+                    "Exit ${node.verifiedExitIp}"
+                } else if (node.ipAddress.isNotEmpty()) {
+                    "${node.cityName} • ${node.relayType.badgeLabel}"
+                } else {
+                    node.cityName
+                }
                 Text(
-                    text = "${node.cityName} • ⚡ ${node.pingMs} ms • Wi-Fi Warp",
+                    text = "$endpointSub • ⚡ $cardPing",
                     style = MaterialTheme.typography.bodyMedium,
                     color = latencyColor(node.pingMs),
                     maxLines = 1,
@@ -1392,21 +1332,27 @@ private fun SelectedCountryGlassCard(
                 )
             }
 
+            Spacer(modifier = Modifier.width(8.dp))
+
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = SkyBluePrimary.copy(alpha = 0.14f),
-                border = BorderStroke(1.dp, SkyBluePrimary.copy(alpha = 0.35f))
+                border = BorderStroke(1.dp, SkyBluePrimary.copy(alpha = 0.35f)),
+                modifier = Modifier.minimumInteractiveComponentSize()
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         text = "Change",
                         style = MaterialTheme.typography.labelLarge.copy(
                             color = SkyBluePrimary,
-                            fontSize = 11.sp
-                        )
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.5.sp
+                        ),
+                        maxLines = 1,
+                        softWrap = false
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Icon(
@@ -1458,7 +1404,9 @@ private fun TelemetryGlassCard(
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontWeight = FontWeight.Bold
                     ),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
             Spacer(modifier = Modifier.height(8.dp))
@@ -1484,8 +1432,9 @@ private fun TelemetryGlassCard(
 
 fun latencyColor(pingMs: Int): Color {
     return when {
-        pingMs < 85 -> EmeraldConnected
-        pingMs < 180 -> AmberHandshaking
+        pingMs <= 0 -> SkyBluePrimary
+        pingMs < 140 -> EmeraldConnected
+        pingMs < 260 -> AmberHandshaking
         else -> Color(0xFFE11D48)
     }
 }

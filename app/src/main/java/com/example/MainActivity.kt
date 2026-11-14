@@ -53,21 +53,24 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.LocalFireDepartment
-import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.outlined.PowerSettingsNew
 import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -106,26 +109,29 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.model.RelayTunnelType
 import com.example.model.TunnelConnectionStatus
 import com.example.model.VpnNode
 import com.example.ui.AetherTab
 import com.example.ui.AnimatedGifStyleAVpnLogo
 import com.example.ui.ConnectScreen
+import com.example.ui.ConnectionLogScreen
 import com.example.ui.IosGlassCard
 import com.example.ui.NodeListScreen
 import com.example.ui.VpnEventPopup
 import com.example.ui.VpnPopupTone
+import com.example.ui.VpnServiceStateIndicatorBar
 import com.example.ui.VpnUiState
 import com.example.ui.VpnViewModel
 import com.example.ui.theme.AetherNodeTheme
 import com.example.ui.theme.EmeraldConnected
 import com.example.ui.theme.SkyBluePrimary
-import com.example.vpn.AetherVpnStateBus
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlin.math.PI
@@ -215,15 +221,14 @@ fun AVpnRootApp(
         }
     }
 
-    // Animated GIF-style boot sequence progression
+    // Ultra-fast lightweight boot progression (~400ms total)
     LaunchedEffect(showStartupSplash) {
         if (showStartupSplash) {
-            val steps = 18
+            val steps = 8
             for (i in 1..steps) {
                 bootProgress = i / steps.toFloat()
-                delay(75L)
+                delay(45L)
             }
-            delay(180L)
             showStartupSplash = false
         }
     }
@@ -250,11 +255,6 @@ fun AVpnRootApp(
     ) { result ->
         val targetNode = pendingNodeToConnect ?: uiState.selectedNode
         if (result.resultCode == android.app.Activity.RESULT_OK) {
-            AetherVpnStateBus.appendLog(
-                tag = "OS",
-                message = "Android VpnService user consent granted.",
-                isHighlight = true
-            )
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             } else {
@@ -266,12 +266,14 @@ fun AVpnRootApp(
                 pendingNodeToConnect = null
             }
         } else {
-            viewModel.startVpnServiceWithNode(
-                context = context,
-                node = targetNode,
-                isManualSelection = pendingIsManualSelection
-            )
             pendingNodeToConnect = null
+            viewModel.showEventPopup(
+                title = "VPN Permission Needed",
+                subtitle = "Allow Android VPN connection permission to activate the tunnel.",
+                flagEmoji = "🛡️",
+                detailBadge = "System Consent Required",
+                tone = VpnPopupTone.DISCONNECTED
+            )
         }
     }
 
@@ -344,13 +346,16 @@ fun AVpnRootApp(
                                     text = stringResource(R.string.app_name),
                                     style = MaterialTheme.typography.titleLarge.copy(
                                         fontWeight = FontWeight.Bold
-                                    )
+                                    ),
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                                 Text(
-                                    text = "Wi-Fi Warp • By Ashir ♥️",
+                                    text = "TUN0 • By Ashir ♥️",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
+                                    softWrap = false,
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
@@ -428,6 +433,7 @@ fun AVpnRootApp(
                                     imageVector = when (tab) {
                                         AetherTab.CONNECT -> if (selected) Icons.Filled.PowerSettingsNew else Icons.Outlined.PowerSettingsNew
                                         AetherTab.NODES -> if (selected) Icons.Filled.Public else Icons.Outlined.Public
+                                        AetherTab.LOGS -> if (selected) Icons.Filled.Terminal else Icons.Outlined.Terminal
                                     },
                                     contentDescription = tab.label
                                 )
@@ -437,7 +443,9 @@ fun AVpnRootApp(
                                     text = tab.label,
                                     style = MaterialTheme.typography.labelLarge.copy(
                                         fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
-                                    )
+                                    ),
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             },
                             modifier = Modifier.testTag("nav_tab_${tab.route}")
@@ -446,64 +454,110 @@ fun AVpnRootApp(
                 }
             }
         ) { innerPadding ->
-            Box(
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
             ) {
-                when (uiState.activeTab) {
-                    AetherTab.CONNECT -> {
-                        ConnectScreen(
-                            uiState = uiState,
-                            onToggleConnection = {
-                                val currentStatus = uiState.telemetry.status
-                                if (currentStatus == TunnelConnectionStatus.CONNECTED ||
-                                    currentStatus == TunnelConnectionStatus.CONNECTING
-                                ) {
-                                    viewModel.stopVpnService(context)
-                                } else {
-                                    initiateVpnConnect(
-                                        uiState.selectedNode,
-                                        !uiState.isAutoFastestMode
+                // Live VpnService Connection State Visual Indicator (tapping opens Connection Log)
+                VpnServiceStateIndicatorBar(
+                    telemetry = uiState.telemetry,
+                    isDark = isDark,
+                    onClick = { viewModel.selectTab(AetherTab.LOGS) },
+                    modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .padding(horizontal = 18.dp, vertical = 4.dp)
+                )
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                ) {
+                    when (uiState.activeTab) {
+                        AetherTab.CONNECT -> {
+                            ConnectScreen(
+                                uiState = uiState,
+                                onToggleConnection = {
+                                    val currentStatus = uiState.telemetry.status
+                                    if (currentStatus == TunnelConnectionStatus.CONNECTED ||
+                                        currentStatus == TunnelConnectionStatus.CONNECTING
+                                    ) {
+                                        viewModel.stopVpnService(context)
+                                    } else {
+                                        initiateVpnConnect(
+                                            uiState.selectedNode,
+                                            !uiState.isAutoFastestMode
+                                        )
+                                    }
+                                },
+                                onConnectSmartFastest = {
+                                    viewModel.fetchLatestAndConnectFastestNow { fastestNow ->
+                                        initiateVpnConnect(fastestNow, false)
+                                    }
+                                },
+                                onOpenNodeSelector = {
+                                    viewModel.selectTab(AetherTab.NODES)
+                                },
+                                onClearDiagnostics = viewModel::clearDiagnostics,
+                                onOpenConnectionLogs = {
+                                    viewModel.selectTab(AetherTab.LOGS)
+                                },
+                                onOpenDeveloperCredits = {
+                                    viewModel.setShowDeveloperCreditsModal(true)
+                                },
+                                onToggleWifiOnlyLatency = viewModel::setWifiOnlyLatencyCheck
+                            )
+                        }
+
+                        AetherTab.NODES -> {
+                            NodeListScreen(
+                                uiState = uiState,
+                                onSearchQueryChange = viewModel::updateSearchQuery,
+                                onSelectRegion = viewModel::selectRegion,
+                                onSelectSortOption = viewModel::selectSortOption,
+                                onTogglePingSort = viewModel::togglePingSortOrder,
+                                onSelectAutoFastest = {
+                                    viewModel.fetchLatestAndConnectFastestNow { fastestNow ->
+                                        initiateVpnConnect(fastestNow, false)
+                                    }
+                                },
+                                onSelectAndConnectNode = { node ->
+                                    val chosenNode = node.copy(protocol = uiState.preferences.preferredProtocol)
+                                    viewModel.selectManualNode(chosenNode)
+                                    initiateVpnConnect(chosenNode, true)
+                                },
+                                onToggleFavorite = viewModel::toggleFavorite,
+                                onSyncPublicApi = { viewModel.syncLivePublicNodes(silent = false) },
+                                onOpenAddCustomModal = { viewModel.setShowAddCustomNodeModal(true) },
+                                onOpenDeveloperCredits = { viewModel.setShowDeveloperCreditsModal(true) }
+                            )
+                        }
+
+                        AetherTab.LOGS -> {
+                            ConnectionLogScreen(
+                                telemetry = uiState.telemetry,
+                                isDark = isDark,
+                                onClearLogs = viewModel::clearDiagnostics,
+                                onRetryFastSwitch = {
+                                    viewModel.fetchLatestAndConnectFastestNow { fastestNow ->
+                                        initiateVpnConnect(fastestNow, false)
+                                    }
+                                },
+                                onBrowseServers = {
+                                    viewModel.selectTab(AetherTab.NODES)
+                                },
+                                onCopiedNotice = { summary ->
+                                    viewModel.showEventPopup(
+                                        title = "Connection Log Copied",
+                                        subtitle = summary,
+                                        flagEmoji = "📋",
+                                        detailBadge = "Clipboard Ready",
+                                        tone = VpnPopupTone.INFO
                                     )
                                 }
-                            },
-                            onConnectSmartFastest = {
-                                viewModel.fetchLatestAndConnectFastestNow { fastestNow ->
-                                    initiateVpnConnect(fastestNow, false)
-                                }
-                            },
-                            onOpenNodeSelector = {
-                                viewModel.selectTab(AetherTab.NODES)
-                            },
-                            onOpenDeveloperCredits = {
-                                viewModel.setShowDeveloperCreditsModal(true)
-                            }
-                        )
-                    }
-
-                    AetherTab.NODES -> {
-                        NodeListScreen(
-                            uiState = uiState,
-                            onSearchQueryChange = viewModel::updateSearchQuery,
-                            onSelectRegion = viewModel::selectRegion,
-                            onSelectSortOption = viewModel::selectSortOption,
-                            onTogglePingSort = viewModel::togglePingSortOrder,
-                            onSelectAutoFastest = {
-                                viewModel.fetchLatestAndConnectFastestNow { fastestNow ->
-                                    initiateVpnConnect(fastestNow, false)
-                                }
-                            },
-                            onSelectAndConnectNode = { node ->
-                                val chosenNode = node.copy(protocol = uiState.preferences.preferredProtocol)
-                                viewModel.selectManualNode(chosenNode)
-                                initiateVpnConnect(chosenNode, true)
-                            },
-                            onToggleFavorite = viewModel::toggleFavorite,
-                            onSyncPublicApi = { viewModel.syncLivePublicNodes(silent = false) },
-                            onOpenAddCustomModal = { viewModel.setShowAddCustomNodeModal(true) },
-                            onOpenDeveloperCredits = { viewModel.setShowDeveloperCreditsModal(true) }
-                        )
+                            )
+                        }
                     }
                 }
             }
@@ -614,7 +668,7 @@ fun AVpnRootApp(
             AddCustomNodeFullScreenOverlay(
                 isDark = isDark,
                 onDismiss = { viewModel.setShowAddCustomNodeModal(false) },
-                onConfirmAdd = { country, code, city, ip, port, operator ->
+                onConfirmAdd = { country, code, city, ip, port, operator, relayType, username, password ->
                     viewModel.addCustomCommunityNode(
                         countryName = country,
                         countryCode = code,
@@ -622,7 +676,10 @@ fun AVpnRootApp(
                         ipAddress = ip,
                         port = port,
                         operatorName = operator,
-                        protocol = uiState.preferences.preferredProtocol
+                        protocol = uiState.preferences.preferredProtocol,
+                        relayType = relayType,
+                        username = username,
+                        password = password
                     )
                 }
             )
@@ -892,145 +949,45 @@ private fun AVpnFullScreenGlassPopupOverlay(
 }
 
 /**
- * Enhanced Liquid iPhone Frosted Glass Mesh Backdrop with 3 animated aurora orbs
- * and smooth Dark/Light mode transitions.
+ * Ultra-Light Static Frosted Glass Mesh Backdrop (zero infinite frame redraws).
  */
 @Composable
 private fun IosMeshBackdrop(isDark: Boolean) {
-    val bgColor by animateColorAsState(
-        targetValue = if (isDark) Color(0xFF050A14) else Color(0xFFEAF3FF),
-        animationSpec = tween(480, easing = FastOutSlowInEasing),
-        label = "backdrop_base_color"
-    )
-    val orb1Color by animateColorAsState(
-        targetValue = if (isDark) {
-            SkyBluePrimary.copy(alpha = 0.28f)
+    val bgBrush = remember(isDark) {
+        if (isDark) {
+            Brush.verticalGradient(
+                colors = listOf(
+                    Color(0xFF050A14),
+                    Color(0xFF0B162C),
+                    Color(0xFF060B15)
+                )
+            )
         } else {
-            SkyBluePrimary.copy(alpha = 0.30f)
-        },
-        animationSpec = tween(480),
-        label = "orb1_color"
-    )
-    val orb2Color by animateColorAsState(
-        targetValue = if (isDark) {
-            FireOrange.copy(alpha = 0.20f)
-        } else {
-            FireOrange.copy(alpha = 0.18f)
-        },
-        animationSpec = tween(480),
-        label = "orb2_color"
-    )
-    val orb3Color by animateColorAsState(
-        targetValue = if (isDark) {
-            EmeraldConnected.copy(alpha = 0.16f)
-        } else {
-            EmeraldConnected.copy(alpha = 0.18f)
-        },
-        animationSpec = tween(480),
-        label = "orb3_color"
-    )
+            Brush.verticalGradient(
+                colors = listOf(
+                    Color(0xFFE5F0FF),
+                    Color(0xFFF3F8FF),
+                    Color(0xFFEAF2FC)
+                )
+            )
+        }
+    }
 
-    val infiniteTransition = rememberInfiniteTransition(label = "mesh_drift")
-    val driftPhase by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = (2f * PI).toFloat(),
-        animationSpec = infiniteRepeatable(
-            animation = tween(8500, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "mesh_drift_phase"
-    )
-
-    Canvas(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(bgColor)
-    ) {
-        val driftX = cos(driftPhase) * (size.width * 0.07f)
-        val driftY = sin(driftPhase) * (size.height * 0.05f)
-
-        drawCircle(
-            brush = Brush.radialGradient(
-                colors = listOf(orb1Color, Color.Transparent),
-                center = Offset(size.width * 0.18f + driftX, size.height * 0.14f + driftY),
-                radius = size.minDimension * 0.78f
-            ),
-            radius = size.minDimension * 0.78f,
-            center = Offset(size.width * 0.18f + driftX, size.height * 0.14f + driftY)
-        )
-
-        drawCircle(
-            brush = Brush.radialGradient(
-                colors = listOf(orb2Color, Color.Transparent),
-                center = Offset(size.width * 0.84f - driftX, size.height * 0.42f - driftY),
-                radius = size.minDimension * 0.72f
-            ),
-            radius = size.minDimension * 0.72f,
-            center = Offset(size.width * 0.84f - driftX, size.height * 0.42f - driftY)
-        )
-
-        drawCircle(
-            brush = Brush.radialGradient(
-                colors = listOf(orb3Color, Color.Transparent),
-                center = Offset(size.width * 0.35f - driftX, size.height * 0.82f + driftY),
-                radius = size.minDimension * 0.68f
-            ),
-            radius = size.minDimension * 0.68f,
-            center = Offset(size.width * 0.35f - driftX, size.height * 0.82f + driftY)
-        )
-    }
+            .background(bgBrush)
+    )
 }
 
 /**
- * Animated GIF-Style Boot Splash Screen featuring the 3D "A" Shield Logo & "Made with love by Ashir ♥️".
+ * Lightweight Boot Screen featuring the 3D "A" Shield Logo & "Made with love by Ashir ♥️".
  */
 @Composable
 private fun AVpnAnimatedBootScreen(
     progress: Float,
     onDismiss: () -> Unit
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "gif_boot_anim")
-
-    val outerRotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "boot_outer_rot"
-    )
-
-    val innerRotation by infiniteTransition.animateFloat(
-        initialValue = 360f,
-        targetValue = 0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1600, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "boot_inner_rot"
-    )
-
-    val flameWave by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = (2f * PI).toFloat(),
-        animationSpec = infiniteRepeatable(
-            animation = tween(900, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "boot_flame_wave"
-    )
-
-    val logoPulse by infiniteTransition.animateFloat(
-        initialValue = 0.95f,
-        targetValue = 1.05f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(750, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "boot_logo_pulse"
-    )
-
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1046,91 +1003,15 @@ private fun AVpnAnimatedBootScreen(
             .testTag("startup_splash_screen"),
         contentAlignment = Alignment.Center
     ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val w = size.width
-            val h = size.height
-            for (i in 0 until 18) {
-                val xRatio = ((i * 37) % 100) / 100f
-                val cycle = ((flameWave / (2f * PI.toFloat())) + (i * 0.11f)) % 1f
-                val yPos = h * (1f - cycle)
-                val xWobble = sin(flameWave + i) * 18.dp.toPx()
-                val alpha = (sin(cycle * PI.toFloat()) * 0.65f).coerceIn(0f, 1f)
-
-                drawCircle(
-                    color = if (i % 2 == 0) FireOrange.copy(alpha = alpha) else SkyBluePrimary.copy(alpha = alpha),
-                    radius = (3f + (i % 4)).dp.toPx(),
-                    center = Offset(w * xRatio + xWobble, yPos)
-                )
-            }
-        }
-
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
             modifier = Modifier.padding(horizontal = 32.dp)
         ) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier.size(204.dp)
-            ) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val center = Offset(size.width / 2f, size.height / 2f)
-                    val maxR = size.minDimension / 2f
-
-                    drawCircle(
-                        brush = Brush.radialGradient(
-                            colors = listOf(
-                                FireOrange.copy(alpha = 0.42f),
-                                SkyBluePrimary.copy(alpha = 0.22f),
-                                Color.Transparent
-                            ),
-                            center = center,
-                            radius = maxR
-                        ),
-                        radius = maxR,
-                        center = center
-                    )
-
-                    val outerArcRadius = maxR * 0.88f
-                    val outerTopLeft = Offset(center.x - outerArcRadius, center.y - outerArcRadius)
-                    val outerSize = Size(outerArcRadius * 2f, outerArcRadius * 2f)
-                    for (seg in 0 until 3) {
-                        drawArc(
-                            brush = Brush.sweepGradient(
-                                colors = listOf(FireGold, FireOrange, FireCrimson, SkyBluePrimary, FireGold)
-                            ),
-                            startAngle = outerRotation + (seg * 120f),
-                            sweepAngle = 78f,
-                            useCenter = false,
-                            topLeft = outerTopLeft,
-                            size = outerSize,
-                            style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
-                        )
-                    }
-
-                    val innerArcRadius = maxR * 0.74f
-                    val innerTopLeft = Offset(center.x - innerArcRadius, center.y - innerArcRadius)
-                    val innerSize = Size(innerArcRadius * 2f, innerArcRadius * 2f)
-                    for (seg in 0 until 4) {
-                        drawArc(
-                            color = SkyBluePrimary.copy(alpha = 0.85f),
-                            startAngle = innerRotation + (seg * 90f),
-                            sweepAngle = 48f,
-                            useCenter = false,
-                            topLeft = innerTopLeft,
-                            size = innerSize,
-                            style = Stroke(width = 2.8.dp.toPx(), cap = StrokeCap.Round)
-                        )
-                    }
-                }
-
-                // Exact 3D "A" Shield Logo with 60 FPS GIF-style animation
-                AnimatedGifStyleAVpnLogo(
-                    size = 112.dp,
-                    cornerRadius = 28.dp,
-                    modifier = Modifier.scale(logoPulse)
-                )
-            }
+            AnimatedGifStyleAVpnLogo(
+                size = 112.dp,
+                cornerRadius = 28.dp
+            )
 
             Spacer(modifier = Modifier.height(16.dp))
 
@@ -1392,14 +1273,27 @@ private fun AshirDeveloperCreditsFullScreenOverlay(
 private fun AddCustomNodeFullScreenOverlay(
     isDark: Boolean,
     onDismiss: () -> Unit,
-    onConfirmAdd: (country: String, code: String, city: String, ip: String, port: Int, operator: String) -> Unit
+    onConfirmAdd: (
+        country: String,
+        code: String,
+        city: String,
+        ip: String,
+        port: Int,
+        operator: String,
+        relayType: RelayTunnelType,
+        username: String,
+        password: String
+    ) -> Unit
 ) {
-    var countryName by remember { mutableStateOf("Finland") }
-    var countryCode by remember { mutableStateOf("FI") }
-    var cityName by remember { mutableStateOf("Helsinki") }
-    var ipAddress by remember { mutableStateOf("95.216.144.18") }
-    var portText by remember { mutableStateOf("443") }
-    var operatorName by remember { mutableStateOf("Custom Wi-Fi Warp") }
+    var countryName by remember { mutableStateOf("") }
+    var countryCode by remember { mutableStateOf("") }
+    var cityName by remember { mutableStateOf("") }
+    var ipAddress by remember { mutableStateOf("") }
+    var portText by remember { mutableStateOf("1080") }
+    var operatorName by remember { mutableStateOf("") }
+    var selectedRelayType by remember { mutableStateOf(RelayTunnelType.SOCKS5) }
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
 
     Box(
         modifier = Modifier
@@ -1419,7 +1313,7 @@ private fun AddCustomNodeFullScreenOverlay(
             accentGlowColor = SkyBluePrimary,
             modifier = Modifier
                 .fillMaxWidth()
-                .widthIn(max = 380.dp)
+                .widthIn(max = 390.dp)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -1429,22 +1323,65 @@ private fun AddCustomNodeFullScreenOverlay(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = 20.dp, vertical = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    text = "Add Custom Server",
+                    text = "Add Custom / Pro Server",
                     style = MaterialTheme.typography.titleLarge.copy(
                         fontWeight = FontWeight.Bold
                     ),
                     color = MaterialTheme.colorScheme.onSurface
                 )
 
+                // Protocol Type Switcher: SOCKS5 vs HTTPS CONNECT
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf(RelayTunnelType.SOCKS5, RelayTunnelType.HTTP_CONNECT).forEach { type ->
+                        val active = selectedRelayType == type
+                        Surface(
+                            onClick = {
+                                selectedRelayType = type
+                                if (portText == "1080" && type == RelayTunnelType.HTTP_CONNECT) {
+                                    portText = "8080"
+                                } else if (portText == "8080" && type == RelayTunnelType.SOCKS5) {
+                                    portText = "1080"
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (active) SkyBluePrimary.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                            border = BorderStroke(
+                                1.1.dp,
+                                if (active) SkyBluePrimary else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(38.dp)
+                                .testTag("custom_proto_${type.name.lowercase()}")
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = type.badgeLabel,
+                                    style = MaterialTheme.typography.labelLarge.copy(
+                                        fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                                        fontSize = 11.sp
+                                    ),
+                                    color = if (active) SkyBluePrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = countryName,
                         onValueChange = { countryName = it },
                         label = { Text("Country") },
+                        placeholder = { Text("Germany") },
                         singleLine = true,
                         modifier = Modifier
                             .weight(1f)
@@ -1452,8 +1389,9 @@ private fun AddCustomNodeFullScreenOverlay(
                     )
                     OutlinedTextField(
                         value = countryCode,
-                        onValueChange = { countryCode = it.take(2) },
+                        onValueChange = { countryCode = it.take(2).uppercase() },
                         label = { Text("ISO") },
+                        placeholder = { Text("DE") },
                         singleLine = true,
                         modifier = Modifier
                             .width(78.dp)
@@ -1463,7 +1401,8 @@ private fun AddCustomNodeFullScreenOverlay(
                 OutlinedTextField(
                     value = cityName,
                     onValueChange = { cityName = it },
-                    label = { Text("City / Hub") },
+                    label = { Text("City / Location") },
+                    placeholder = { Text("Frankfurt") },
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1474,6 +1413,7 @@ private fun AddCustomNodeFullScreenOverlay(
                         value = ipAddress,
                         onValueChange = { ipAddress = it },
                         label = { Text("IP / Host") },
+                        placeholder = { Text("1.2.3.4") },
                         singleLine = true,
                         modifier = Modifier
                             .weight(1f)
@@ -1489,10 +1429,32 @@ private fun AddCustomNodeFullScreenOverlay(
                             .testTag("custom_node_port_input")
                     )
                 }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = username,
+                        onValueChange = { username = it },
+                        label = { Text("Username (Opt)") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("custom_node_username_input")
+                    )
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it },
+                        label = { Text("Password (Opt)") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("custom_node_password_input")
+                    )
+                }
                 OutlinedTextField(
                     value = operatorName,
                     onValueChange = { operatorName = it },
-                    label = { Text("Label") },
+                    label = { Text("Label (Optional)") },
+                    placeholder = { Text("Private Pro Server") },
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1511,26 +1473,37 @@ private fun AddCustomNodeFullScreenOverlay(
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
                         modifier = Modifier
                             .weight(1f)
-                            .height(42.dp)
+                            .height(44.dp)
                             .testTag("cancel_add_custom_node_button")
                     ) {
                         Text("Cancel", style = MaterialTheme.typography.labelLarge)
                     }
                     Button(
                         onClick = {
-                            val parsedPort = portText.toIntOrNull() ?: 443
-                            onConfirmAdd(countryName, countryCode, cityName, ipAddress, parsedPort, operatorName)
+                            val parsedPort = portText.toIntOrNull() ?: 1080
+                            onConfirmAdd(
+                                countryName,
+                                countryCode,
+                                cityName,
+                                ipAddress,
+                                parsedPort,
+                                operatorName,
+                                selectedRelayType,
+                                username,
+                                password
+                            )
                         },
+                        enabled = ipAddress.isNotBlank(),
                         shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = SkyBluePrimary),
                         modifier = Modifier
                             .weight(1f)
-                            .height(42.dp)
+                            .height(44.dp)
                             .testTag("confirm_add_custom_node_button")
                     ) {
                         Text(
-                            text = "Add",
+                            text = "Verify & Add",
                             color = Color.White,
                             style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
                         )
