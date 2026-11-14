@@ -18,6 +18,8 @@ import androidx.work.NetworkType
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.testing.WorkManagerTestInitHelper
+import android.service.quicksettings.Tile
+import com.example.data.PublicNodeRepository
 import com.example.model.RelayTunnelType
 import com.example.model.TunnelConnectionStatus
 import com.example.model.TunnelTelemetry
@@ -25,17 +27,22 @@ import com.example.model.VpnDiagnosticEntry
 import com.example.model.VpnDiagnosticSeverity
 import com.example.model.VpnNode
 import com.example.model.VpnRegion
+import com.example.ui.AutoConnectStartupSettingCard
 import com.example.ui.BatteryOptimizationSettingCard
 import com.example.ui.ConnectionLogScreen
 import com.example.ui.FireConnectOrb
+import com.example.ui.QuickSettingsTileSettingCard
 import com.example.ui.VpnDiagnosticPanel
 import com.example.ui.VpnServiceStateIndicatorBar
+import com.example.ui.VpnViewModel
 import com.example.ui.theme.AetherNodeTheme
+import com.example.vpn.AVpnQuickTileService
 import com.example.vpn.AetherVpnService
 import com.example.vpn.AetherVpnStateBus
 import com.example.vpn.BackgroundLatencyWorkScheduler
 import com.example.vpn.LocalTunnelGateway
 import com.example.vpn.ServerLatencyWorker
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -442,5 +449,160 @@ class ExampleRobolectricTest {
         composeRule.waitForIdle()
         assertTrue(wifiOnlyState.value)
         composeRule.onNodeWithText("Wi-Fi Only").assertIsDisplayed()
+    }
+
+    @Test
+    fun `auto connect on startup persists last server and triggers startup connection in ViewModel`() = runBlocking {
+        val app = ApplicationProvider.getApplicationContext<android.app.Application>()
+        val repo = PublicNodeRepository(app)
+        val savedServer = VpnNode(
+            id = "country-JP",
+            hostName = "198.51.100.88",
+            ipAddress = "198.51.100.88",
+            port = 1080,
+            countryName = "Japan",
+            countryCode = "JP",
+            cityName = "Tokyo",
+            flagEmoji = "🇯🇵",
+            region = VpnRegion.ASIA_PACIFIC,
+            pingMs = 54,
+            downloadSpeedMbps = 140.0,
+            operatorName = "Tokyo Relay",
+            isVerifiedWorking = true
+        )
+
+        repo.setSelectedNode(savedServer.id, isAutoFastest = false, node = savedServer)
+        repo.updateAutoConnectOnStartup(true)
+
+        val prefs = repo.preferencesFlow.first()
+        assertTrue(prefs.autoConnectOnStartup)
+        assertEquals("198.51.100.88", prefs.lastSelectedNode?.ipAddress)
+        assertEquals("JP", prefs.lastSelectedNode?.countryCode)
+
+        val viewModel = VpnViewModel(app)
+        var emitted: Pair<VpnNode, Boolean>? = null
+        val deadline = System.currentTimeMillis() + 5_000L
+        while (System.currentTimeMillis() < deadline) {
+            Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            emitted = viewModel.pendingStartupConnect.value
+            if (emitted != null) break
+            Thread.sleep(25L)
+        }
+        assertNotNull(emitted)
+        assertEquals("198.51.100.88", emitted!!.first.ipAddress)
+        assertEquals("Japan", emitted.first.countryName)
+        assertTrue(emitted.second)
+
+        viewModel.consumePendingStartupConnect()
+        assertNull(viewModel.pendingStartupConnect.value)
+    }
+
+    @Test
+    fun `quick settings tile resolves target and toggles VPN state directly without opening app`(): Unit = runBlocking {
+        val app = ApplicationProvider.getApplicationContext<android.app.Application>()
+        val repo = PublicNodeRepository(app)
+        repo.setSelectedNode("auto_fastest", isAutoFastest = true)
+
+        val savedNode = VpnNode(
+            id = "country-DE",
+            hostName = "203.0.113.45",
+            ipAddress = "203.0.113.45",
+            port = 1080,
+            countryName = "Germany",
+            countryCode = "DE",
+            cityName = "Frankfurt",
+            flagEmoji = "🇩🇪",
+            region = VpnRegion.EUROPE,
+            pingMs = 48,
+            downloadSpeedMbps = 180.0,
+            operatorName = "DE Relay",
+            isVerifiedWorking = true
+        )
+        AetherVpnStateBus.updateNodePool(listOf(savedNode))
+
+        val controller = Robolectric.buildService(AVpnQuickTileService::class.java).create()
+        val tileService = controller.get()
+        val shadowApp = Shadows.shadowOf(tileService.application)
+
+        // Attach a Robolectric Tile instance to the TileService so state/label/subtitle updates are verified
+        val mockTile = try {
+            val constructor = Tile::class.java.getDeclaredConstructor()
+            constructor.isAccessible = true
+            constructor.newInstance().also { tileService.overrideQsTileForTest = it }
+        } catch (_: Throwable) {
+            null
+        }
+
+        // Verify disconnected click starts AetherVpnService directly in background (no MainActivity)
+        AetherVpnStateBus.updateTelemetry { TunnelTelemetry(status = TunnelConnectionStatus.DISCONNECTED) }
+        tileService.toggleTunnelFromTile(prepareIntentProvider = { null })
+        val startedDeadline = System.currentTimeMillis() + 2_000L
+        while (shadowApp.peekNextStartedService() == null && System.currentTimeMillis() < startedDeadline) {
+            Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            Thread.sleep(20L)
+        }
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        val startedOnConnect = shadowApp.nextStartedService
+        assertNotNull(startedOnConnect)
+        assertEquals(AetherVpnService.ACTION_CONNECT, startedOnConnect.action)
+        assertEquals("203.0.113.45", startedOnConnect.getStringExtra(AetherVpnService.EXTRA_NODE_IP))
+        assertNull(shadowApp.nextStartedActivity)
+        if (mockTile != null) {
+            assertEquals(Tile.STATE_ACTIVE, mockTile.state)
+            assertEquals("A VPN • DE", mockTile.label)
+        }
+
+        // Verify connected click stops AetherVpnService immediately without opening app
+        AetherVpnStateBus.updateTelemetry {
+            TunnelTelemetry(
+                status = TunnelConnectionStatus.CONNECTED,
+                activeNode = savedNode
+            )
+        }
+        tileService.toggleTunnelFromTile(prepareIntentProvider = { null })
+        val startedOnDisconnect = shadowApp.nextStartedService
+        assertNotNull(startedOnDisconnect)
+        assertEquals(AetherVpnService.ACTION_DISCONNECT, startedOnDisconnect.action)
+        if (mockTile != null) {
+            assertEquals(Tile.STATE_INACTIVE, mockTile.state)
+            assertEquals("A VPN", mockTile.label)
+        }
+
+        tileService.onStopListening()
+    }
+
+    @Test
+    fun `auto connect startup and quick tile setting cards render and toggle cleanly`() {
+        val autoConnectState = androidx.compose.runtime.mutableStateOf(false)
+        var tileClicks = 0
+
+        composeRule.setContent {
+            AetherNodeTheme(darkTheme = false) {
+                androidx.compose.foundation.layout.Column {
+                    AutoConnectStartupSettingCard(
+                        enabled = autoConnectState.value,
+                        lastServerLabel = "🇩🇪 Germany",
+                        isDark = false,
+                        onToggle = { autoConnectState.value = it }
+                    )
+                    QuickSettingsTileSettingCard(
+                        isDark = false,
+                        onAddTile = { tileClicks++ }
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithText("Off").assertIsDisplayed()
+        composeRule.onNodeWithTag("auto_connect_startup_switch").performClick()
+        composeRule.waitForIdle()
+        assertTrue(autoConnectState.value)
+        composeRule.onNodeWithText("On").assertIsDisplayed()
+        composeRule.onNodeWithText("🇩🇪 Germany", substring = true).assertIsDisplayed()
+
+        composeRule.onNodeWithTag("quick_tile_setting_card").performClick()
+        composeRule.waitForIdle()
+        assertEquals(1, tileClicks)
     }
 }

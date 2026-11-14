@@ -71,14 +71,30 @@ class PublicNodeRepository(private val context: Context) {
             preferredProtocol = protocol,
             dnsServer = prefs[KEY_DNS_SERVER] ?: "1.1.1.1",
             isDarkTheme = prefs[KEY_DARK_THEME] ?: false,
-            wifiOnlyLatencyCheck = prefs[KEY_WIFI_ONLY_LATENCY] ?: false
+            wifiOnlyLatencyCheck = prefs[KEY_WIFI_ONLY_LATENCY] ?: false,
+            autoConnectOnStartup = prefs[KEY_AUTO_CONNECT_ON_STARTUP] ?: false,
+            lastSelectedNode = prefs[KEY_LAST_SELECTED_NODE_JSON]?.let { decodeNodeJson(it) }
         )
     }
 
-    suspend fun setSelectedNode(nodeId: String, isAutoFastest: Boolean = false) {
+    suspend fun setSelectedNode(
+        nodeId: String,
+        isAutoFastest: Boolean = false,
+        node: VpnNode? = null
+    ) {
         context.vpnDataStore.edit {
             it[KEY_SELECTED_NODE_ID] = nodeId
             it[KEY_AUTO_SELECT_FASTEST] = isAutoFastest
+            if (node != null && node.ipAddress.isNotBlank()) {
+                it[KEY_LAST_SELECTED_NODE_JSON] = encodeNodeJson(node)
+            }
+        }
+    }
+
+    suspend fun saveLastSelectedNode(node: VpnNode) {
+        if (node.ipAddress.isBlank() || node.port !in 1..65535) return
+        context.vpnDataStore.edit {
+            it[KEY_LAST_SELECTED_NODE_JSON] = encodeNodeJson(node)
         }
     }
 
@@ -99,6 +115,10 @@ class PublicNodeRepository(private val context: Context) {
 
     suspend fun updateWifiOnlyLatencyCheck(wifiOnly: Boolean) {
         context.vpnDataStore.edit { it[KEY_WIFI_ONLY_LATENCY] = wifiOnly }
+    }
+
+    suspend fun updateAutoConnectOnStartup(enabled: Boolean) {
+        context.vpnDataStore.edit { it[KEY_AUTO_CONNECT_ON_STARTUP] = enabled }
     }
 
     /**
@@ -592,6 +612,72 @@ class PublicNodeRepository(private val context: Context) {
         private val KEY_DNS_SERVER = stringPreferencesKey("dns_server")
         private val KEY_DARK_THEME = booleanPreferencesKey("dark_theme")
         private val KEY_WIFI_ONLY_LATENCY = booleanPreferencesKey("wifi_only_latency_check")
+        private val KEY_AUTO_CONNECT_ON_STARTUP = booleanPreferencesKey("auto_connect_on_startup")
+        private val KEY_LAST_SELECTED_NODE_JSON = stringPreferencesKey("last_selected_node_json")
+
+        fun encodeNodeJson(node: VpnNode): String {
+            return JSONObject().apply {
+                put("id", node.id)
+                put("hostName", node.hostName)
+                put("ipAddress", node.ipAddress)
+                put("port", node.port)
+                put("countryName", node.countryName)
+                put("countryCode", node.countryCode)
+                put("cityName", node.cityName)
+                put("flagEmoji", node.flagEmoji)
+                put("pingMs", node.pingMs)
+                put("downloadSpeedMbps", node.downloadSpeedMbps)
+                put("operatorName", node.operatorName)
+                put("protocol", node.protocol.name)
+                put("relayType", node.relayType.name)
+                put("username", node.username)
+                put("password", node.password)
+                put("verifiedExitIp", node.verifiedExitIp)
+                put("isLiveFromPublicApi", node.isLiveFromPublicApi)
+                put("isVerifiedWorking", node.isVerifiedWorking)
+                put("isCustomNode", node.isCustomNode)
+            }.toString()
+        }
+
+        fun decodeNodeJson(rawJson: String): VpnNode? {
+            if (rawJson.isBlank()) return null
+            return runCatching {
+                val obj = JSONObject(rawJson)
+                val ip = obj.optString("ipAddress").trim()
+                val port = obj.optInt("port", 0)
+                if (ip.isBlank() || port !in 1..65535) return null
+                val cc = obj.optString("countryCode", "XX").take(2).uppercase(Locale.US).ifEmpty { "XX" }
+                val protocol = runCatching {
+                    VpnProtocol.valueOf(obj.optString("protocol", VpnProtocol.WIREGUARD_CHACHA20.name))
+                }.getOrDefault(VpnProtocol.WIREGUARD_CHACHA20)
+                val relayType = runCatching {
+                    RelayTunnelType.valueOf(obj.optString("relayType", RelayTunnelType.SOCKS5.name))
+                }.getOrDefault(RelayTunnelType.SOCKS5)
+
+                VpnNode(
+                    id = obj.optString("id", "country-$cc"),
+                    hostName = obj.optString("hostName", ip).ifEmpty { ip },
+                    ipAddress = ip,
+                    port = port,
+                    countryName = obj.optString("countryName", countryNameFromCode(cc)),
+                    countryCode = cc,
+                    cityName = obj.optString("cityName", "Relay"),
+                    flagEmoji = obj.optString("flagEmoji", countryCodeToFlagEmoji(cc)),
+                    region = mapCountryCodeToRegion(cc),
+                    pingMs = obj.optInt("pingMs", -1),
+                    downloadSpeedMbps = obj.optDouble("downloadSpeedMbps", 50.0),
+                    operatorName = obj.optString("operatorName", "Verified Relay"),
+                    protocol = protocol,
+                    relayType = relayType,
+                    username = obj.optString("username", ""),
+                    password = obj.optString("password", ""),
+                    verifiedExitIp = obj.optString("verifiedExitIp", ""),
+                    isLiveFromPublicApi = obj.optBoolean("isLiveFromPublicApi", true),
+                    isVerifiedWorking = obj.optBoolean("isVerifiedWorking", false),
+                    isCustomNode = obj.optBoolean("isCustomNode", false)
+                )
+            }.getOrNull()
+        }
 
         fun countryCodeToFlagEmoji(countryCode: String): String {
             val clean = countryCode.trim().uppercase(Locale.US)

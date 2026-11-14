@@ -234,6 +234,7 @@ class AetherVpnService : VpnService() {
                         diagnosticLogs = prev.diagnosticLogs
                     )
                 }
+                AVpnQuickTileService.requestTileRefresh(this@AetherVpnService)
 
                 AetherVpnStateBus.recordDiagnostic(
                     phase = "Connecting",
@@ -403,6 +404,7 @@ class AetherVpnService : VpnService() {
                         errorMessage = null
                     )
                 }
+                AVpnQuickTileService.requestTileRefresh(this@AetherVpnService)
 
                 AetherVpnStateBus.recordDiagnostic(
                     phase = "Foreground Service",
@@ -872,6 +874,7 @@ class AetherVpnService : VpnService() {
                 diagnosticLogs = prev.diagnosticLogs
             )
         }
+        AVpnQuickTileService.requestTileRefresh(this@AetherVpnService)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -1095,48 +1098,7 @@ class AetherVpnService : VpnService() {
     }
 
     private fun loadPersistedRestoreConfig(): Triple<VpnNode, Boolean, String>? {
-        return try {
-            val prefs = getSharedPreferences(FGS_PREFS_NAME, Context.MODE_PRIVATE)
-            if (!prefs.getBoolean(PREF_HAS_SESSION, false)) return null
-            val ip = prefs.getString(EXTRA_NODE_IP, "").orEmpty()
-            val port = prefs.getInt(EXTRA_NODE_PORT, 0)
-            if (ip.isBlank() || port !in 1..65535) return null
-
-            val cc = prefs.getString(EXTRA_NODE_COUNTRY_CODE, "XX") ?: "XX"
-            val protocol = runCatching {
-                VpnProtocol.valueOf(prefs.getString(EXTRA_NODE_PROTOCOL, null) ?: VpnProtocol.WIREGUARD_CHACHA20.name)
-            }.getOrDefault(VpnProtocol.WIREGUARD_CHACHA20)
-            val relayType = runCatching {
-                RelayTunnelType.valueOf(prefs.getString(EXTRA_NODE_RELAY_TYPE, null) ?: RelayTunnelType.SOCKS5.name)
-            }.getOrDefault(RelayTunnelType.SOCKS5)
-
-            val node = VpnNode(
-                id = prefs.getString(EXTRA_NODE_ID, "country-$cc") ?: "country-$cc",
-                hostName = prefs.getString(EXTRA_NODE_HOSTNAME, ip).orEmpty().ifEmpty { ip },
-                ipAddress = ip,
-                port = port,
-                countryName = prefs.getString(EXTRA_NODE_COUNTRY, "Unknown") ?: "Unknown",
-                countryCode = cc,
-                cityName = prefs.getString(EXTRA_NODE_CITY, "Relay") ?: "Relay",
-                flagEmoji = prefs.getString(EXTRA_NODE_FLAG, "🌐") ?: "🌐",
-                region = PublicNodeRepository.mapCountryCodeToRegion(cc),
-                pingMs = prefs.getInt(EXTRA_NODE_PING, -1),
-                downloadSpeedMbps = 100.0,
-                operatorName = prefs.getString(EXTRA_NODE_OPERATOR, "Verified Relay") ?: "Verified Relay",
-                protocol = protocol,
-                relayType = relayType,
-                username = prefs.getString(EXTRA_NODE_USERNAME, "").orEmpty(),
-                password = prefs.getString(EXTRA_NODE_PASSWORD, "").orEmpty(),
-                verifiedExitIp = prefs.getString(EXTRA_NODE_EXIT_IP, "").orEmpty(),
-                isVerifiedWorking = prefs.getBoolean(EXTRA_NODE_VERIFIED, false),
-                isCustomNode = prefs.getBoolean(EXTRA_NODE_IS_CUSTOM, false)
-            )
-            val isManual = prefs.getBoolean(EXTRA_IS_MANUAL_SELECTION, false)
-            val dnsServer = prefs.getString(EXTRA_DNS_SERVER, "1.1.1.1") ?: "1.1.1.1"
-            Triple(node, isManual, dnsServer)
-        } catch (_: Exception) {
-            null
-        }
+        return loadPersistedRestoreConfig(this)
     }
 
     private fun clearPersistedRestoreState() {
@@ -1226,5 +1188,50 @@ class AetherVpnService : VpnService() {
         private const val DEFAULT_MTU = 1400
         private const val VIRTUAL_CLIENT_IP = "10.8.0.2"
         private const val VIRTUAL_CLIENT_IPV6 = "fd00:8::2"
+
+        fun loadPersistedRestoreConfig(context: Context): Triple<VpnNode, Boolean, String>? {
+            return try {
+                val prefs = context.getSharedPreferences(FGS_PREFS_NAME, Context.MODE_PRIVATE)
+                if (!prefs.getBoolean(PREF_HAS_SESSION, false)) return null
+                val ip = prefs.getString(EXTRA_NODE_IP, "").orEmpty()
+                val port = prefs.getInt(EXTRA_NODE_PORT, 0)
+                if (ip.isBlank() || port !in 1..65535) return null
+
+                val cc = prefs.getString(EXTRA_NODE_COUNTRY_CODE, "XX") ?: "XX"
+                val protocol = runCatching {
+                    VpnProtocol.valueOf(prefs.getString(EXTRA_NODE_PROTOCOL, null) ?: VpnProtocol.WIREGUARD_CHACHA20.name)
+                }.getOrDefault(VpnProtocol.WIREGUARD_CHACHA20)
+                val relayType = runCatching {
+                    RelayTunnelType.valueOf(prefs.getString(EXTRA_NODE_RELAY_TYPE, null) ?: RelayTunnelType.SOCKS5.name)
+                }.getOrDefault(RelayTunnelType.SOCKS5)
+
+                val node = VpnNode(
+                    id = prefs.getString(EXTRA_NODE_ID, "country-$cc") ?: "country-$cc",
+                    hostName = prefs.getString(EXTRA_NODE_HOSTNAME, ip).orEmpty().ifEmpty { ip },
+                    ipAddress = ip,
+                    port = port,
+                    countryName = prefs.getString(EXTRA_NODE_COUNTRY, "Unknown") ?: "Unknown",
+                    countryCode = cc,
+                    cityName = prefs.getString(EXTRA_NODE_CITY, "Relay") ?: "Relay",
+                    flagEmoji = prefs.getString(EXTRA_NODE_FLAG, "🌐") ?: "🌐",
+                    region = PublicNodeRepository.mapCountryCodeToRegion(cc),
+                    pingMs = prefs.getInt(EXTRA_NODE_PING, -1),
+                    downloadSpeedMbps = 100.0,
+                    operatorName = prefs.getString(EXTRA_NODE_OPERATOR, "Verified Relay") ?: "Verified Relay",
+                    protocol = protocol,
+                    relayType = relayType,
+                    username = prefs.getString(EXTRA_NODE_USERNAME, "").orEmpty(),
+                    password = prefs.getString(EXTRA_NODE_PASSWORD, "").orEmpty(),
+                    verifiedExitIp = prefs.getString(EXTRA_NODE_EXIT_IP, "").orEmpty(),
+                    isVerifiedWorking = prefs.getBoolean(EXTRA_NODE_VERIFIED, false),
+                    isCustomNode = prefs.getBoolean(EXTRA_NODE_IS_CUSTOM, false)
+                )
+                val isManual = prefs.getBoolean(EXTRA_IS_MANUAL_SELECTION, false)
+                val dnsServer = prefs.getString(EXTRA_DNS_SERVER, "1.1.1.1") ?: "1.1.1.1"
+                Triple(node, isManual, dnsServer)
+            } catch (_: Exception) {
+                null
+            }
+        }
     }
 }

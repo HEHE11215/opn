@@ -44,8 +44,10 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.Wifi
@@ -312,6 +314,8 @@ fun ConnectScreen(
     onOpenConnectionLogs: () -> Unit = {},
     onOpenDeveloperCredits: () -> Unit = {},
     onToggleWifiOnlyLatency: (Boolean) -> Unit = {},
+    onToggleAutoConnectOnStartup: (Boolean) -> Unit = {},
+    onRequestAddQuickTile: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val status = uiState.telemetry.status
@@ -610,7 +614,21 @@ fun ConnectScreen(
             }
         }
 
-        // 4. WorkManager Battery Optimization Setting (Wi-Fi Only Latency Checks)
+        // 4. Settings & Automation Section
+        item {
+            val savedServerName = (uiState.preferences.lastSelectedNode ?: displayNode)
+                .takeIf { it.ipAddress.isNotBlank() }
+                ?.let { "${it.flagEmoji} ${it.countryName}" }
+                ?: "Fastest Relay"
+            AutoConnectStartupSettingCard(
+                enabled = uiState.preferences.autoConnectOnStartup,
+                lastServerLabel = savedServerName,
+                isDark = isDark,
+                onToggle = onToggleAutoConnectOnStartup
+            )
+        }
+
+        // 5. WorkManager Battery Optimization Setting (Wi-Fi Only Latency Checks)
         item {
             BatteryOptimizationSettingCard(
                 wifiOnly = uiState.preferences.wifiOnlyLatencyCheck,
@@ -619,7 +637,15 @@ fun ConnectScreen(
             )
         }
 
-        // 5. Lightweight Connection Log Quick Shortcut Card
+        // 6. Quick Settings Shade Tile Card
+        item {
+            QuickSettingsTileSettingCard(
+                isDark = isDark,
+                onAddTile = onRequestAddQuickTile
+            )
+        }
+
+        // 7. Lightweight Connection Log Quick Shortcut Card
         item {
             ConnectionLogShortcutCard(
                 logCount = uiState.telemetry.diagnosticLogs.size,
@@ -633,12 +659,200 @@ fun ConnectScreen(
             )
         }
 
-        // 6. Developer Credits Banner ("Made with love by Ashir ♥️")
+        // 8. Developer Credits Banner ("Made with love by Ashir ♥️")
         item {
             DeveloperCreditsGlassBanner(
                 isDark = isDark,
                 onClick = onOpenDeveloperCredits
             )
+        }
+    }
+}
+
+@Composable
+fun AutoConnectStartupSettingCard(
+    enabled: Boolean,
+    lastServerLabel: String,
+    isDark: Boolean,
+    onToggle: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val accent = if (enabled) FireOrange else SkyBluePrimary
+    IosGlassCard(
+        isDark = isDark,
+        cornerRadius = 20.dp,
+        accentGlowColor = if (enabled) FireOrange else null,
+        modifier = modifier
+            .fillMaxWidth()
+            .widthIn(max = 600.dp)
+            .clickable { onToggle(!enabled) }
+            .testTag("auto_connect_startup_card")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = accent.copy(alpha = 0.16f),
+                border = BorderStroke(1.dp, accent.copy(alpha = 0.40f)),
+                modifier = Modifier.size(38.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.RocketLaunch,
+                        contentDescription = null,
+                        tint = accent,
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+            }
+
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.auto_connect_title),
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = accent.copy(alpha = 0.16f)
+                    ) {
+                        Text(
+                            text = if (enabled) "On" else "Off",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 10.sp
+                            ),
+                            color = accent,
+                            maxLines = 1,
+                            softWrap = false,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = if (enabled) {
+                        stringResource(R.string.auto_connect_subtitle_on, lastServerLabel)
+                    } else {
+                        stringResource(R.string.auto_connect_subtitle_off)
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Switch(
+                checked = enabled,
+                onCheckedChange = onToggle,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White,
+                    checkedTrackColor = FireOrange,
+                    uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+                ),
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag("auto_connect_startup_switch")
+            )
+        }
+    }
+}
+
+@Composable
+fun QuickSettingsTileSettingCard(
+    isDark: Boolean,
+    onAddTile: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    IosGlassCard(
+        isDark = isDark,
+        cornerRadius = 20.dp,
+        modifier = modifier
+            .fillMaxWidth()
+            .widthIn(max = 600.dp)
+            .clickable(onClick = onAddTile)
+            .testTag("quick_tile_setting_card")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = SkyBluePrimary.copy(alpha = 0.16f),
+                border = BorderStroke(1.dp, SkyBluePrimary.copy(alpha = 0.40f)),
+                modifier = Modifier.size(38.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.Tune,
+                        contentDescription = null,
+                        tint = SkyBluePrimary,
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+            }
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.qs_tile_setting_title),
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = stringResource(R.string.qs_tile_setting_subtitle),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = SkyBluePrimary.copy(alpha = 0.14f),
+                border = BorderStroke(1.dp, SkyBluePrimary.copy(alpha = 0.35f)),
+                modifier = Modifier.minimumInteractiveComponentSize()
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = "Add Tile",
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = SkyBluePrimary
+                        ),
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+            }
         }
     }
 }

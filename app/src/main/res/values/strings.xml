@@ -20,4 +20,9 @@
     <string name="battery_opt_title">Battery Optimization</string>
     <string name="battery_opt_subtitle_wifi">WorkManager checks latency on Wi-Fi only</string>
     <string name="battery_opt_subtitle_all">Checks latency on Wi-Fi &amp; mobile data</string>
+    <string name="auto_connect_title">Auto-Connect on Startup</string>
+    <string name="auto_connect_subtitle_on">Connects automatically on app launch using %1$s</string>
+    <string name="auto_connect_subtitle_off">Connects with last selected server when app opens</string>
+    <string name="qs_tile_setting_title">Quick Settings Shade Tile</string>
+    <string name="qs_tile_setting_subtitle">Toggle A VPN directly from your notification shade</string>
 </resources>

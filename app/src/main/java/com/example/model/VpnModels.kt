@@ -183,5 +183,7 @@ data class VpnPreferences(
     val preferredProtocol: VpnProtocol = VpnProtocol.WIREGUARD_CHACHA20,
     val dnsServer: String = "1.1.1.1",
     val isDarkTheme: Boolean = false,
-    val wifiOnlyLatencyCheck: Boolean = false
+    val wifiOnlyLatencyCheck: Boolean = false,
+    val autoConnectOnStartup: Boolean = false,
+    val lastSelectedNode: VpnNode? = null
 )

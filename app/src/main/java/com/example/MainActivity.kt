@@ -1,7 +1,10 @@
 package com.example
 
 import android.Manifest
+import android.app.StatusBarManager
+import android.content.ComponentName
 import android.content.Intent
+import android.graphics.drawable.Icon as AndroidDrawableIcon
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
@@ -132,6 +135,7 @@ import com.example.ui.VpnViewModel
 import com.example.ui.theme.AetherNodeTheme
 import com.example.ui.theme.EmeraldConnected
 import com.example.ui.theme.SkyBluePrimary
+import com.example.vpn.AVpnQuickTileService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlin.math.PI
@@ -301,8 +305,63 @@ fun AVpnRootApp(
     LaunchedEffect(fastStartTrigger) {
         if (fastStartTrigger > 0L) {
             showStartupSplash = false
+            viewModel.consumePendingStartupConnect()
             val fastestNode = viewModel.enableAutoFastestModeAndGetNode()
             initiateVpnConnect(fastestNode, false)
+        }
+    }
+
+    // Handle Auto-Connect on Startup using last selected server when enabled
+    val pendingStartupConnect by viewModel.pendingStartupConnect.collectAsStateWithLifecycle()
+    LaunchedEffect(pendingStartupConnect, fastStartTrigger) {
+        val pending = pendingStartupConnect
+        if (pending != null && fastStartTrigger == 0L) {
+            showStartupSplash = false
+            viewModel.consumePendingStartupConnect()
+            initiateVpnConnect(pending.first, pending.second)
+        }
+    }
+
+    val requestAddQuickSettingsTile: () -> Unit = {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val statusBarManager = context.getSystemService(StatusBarManager::class.java)
+            if (statusBarManager != null) {
+                statusBarManager.requestAddTileService(
+                    ComponentName(context, AVpnQuickTileService::class.java),
+                    context.getString(R.string.qs_tile_label),
+                    AndroidDrawableIcon.createWithResource(context, R.drawable.ic_avpn_tile),
+                    context.mainExecutor
+                ) { result ->
+                    when (result) {
+                        StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED -> {
+                            viewModel.showEventPopup(
+                                title = "Quick Tile Added!",
+                                subtitle = "Pull down your notification shade anytime to toggle A VPN.",
+                                flagEmoji = "⚡",
+                                detailBadge = "Quick Settings Ready",
+                                tone = VpnPopupTone.CONNECTED
+                            )
+                        }
+                        StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED -> {
+                            viewModel.showEventPopup(
+                                title = "Quick Tile Already Active",
+                                subtitle = "A VPN toggle is already in your Quick Settings notification shade.",
+                                flagEmoji = "🛡️",
+                                detailBadge = "Already Added",
+                                tone = VpnPopupTone.INFO
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            viewModel.showEventPopup(
+                title = "Add From Quick Settings",
+                subtitle = "Swipe down your notification shade, tap Edit (pencil), and drag A VPN into active tiles.",
+                flagEmoji = "⚙️",
+                detailBadge = "Quick Settings Tile",
+                tone = VpnPopupTone.INFO
+            )
         }
     }
 
@@ -506,7 +565,9 @@ fun AVpnRootApp(
                                 onOpenDeveloperCredits = {
                                     viewModel.setShowDeveloperCreditsModal(true)
                                 },
-                                onToggleWifiOnlyLatency = viewModel::setWifiOnlyLatencyCheck
+                                onToggleWifiOnlyLatency = viewModel::setWifiOnlyLatencyCheck,
+                                onToggleAutoConnectOnStartup = viewModel::setAutoConnectOnStartup,
+                                onRequestAddQuickTile = requestAddQuickSettingsTile
                             )
                         }
 

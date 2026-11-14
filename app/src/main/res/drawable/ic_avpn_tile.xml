@@ -1,0 +1,11 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <!-- Shield silhouette -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,2L4,5.5V11.2C4,16.45 7.41,21.34 12,22.5C16.59,21.34 20,16.45 20,11.2V5.5L12,2ZM11.15,17.2L11.75,13H8.9L13.15,6.8L12.55,11H15.3L11.15,17.2Z" />
+</vector>

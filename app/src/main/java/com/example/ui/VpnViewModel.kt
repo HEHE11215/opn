@@ -16,6 +16,7 @@ import com.example.model.VpnNode
 import com.example.model.VpnPreferences
 import com.example.model.VpnProtocol
 import com.example.model.VpnRegion
+import com.example.vpn.AVpnQuickTileService
 import com.example.vpn.AetherVpnService
 import com.example.vpn.AetherVpnStateBus
 import com.example.vpn.BackgroundLatencyWorkScheduler
@@ -25,8 +26,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -108,10 +111,15 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
     private val _nodes = MutableStateFlow<List<VpnNode>>(emptyList())
     private val _customNodes = MutableStateFlow<List<VpnNode>>(emptyList())
     private val _filterState = MutableStateFlow(FilterBarState())
+    private val _pendingStartupConnect = MutableStateFlow<Pair<VpnNode, Boolean>?>(null)
+    val pendingStartupConnect: StateFlow<Pair<VpnNode, Boolean>?> = _pendingStartupConnect.asStateFlow()
+
     private var lastObservedStatus: TunnelConnectionStatus = TunnelConnectionStatus.DISCONNECTED
     private var lastConnectedNodeKey: String? = null
     @Volatile
     private var wifiOnlyLatencyEnabled: Boolean = false
+    @Volatile
+    private var startupAutoConnectConsumed: Boolean = false
 
     val uiState: StateFlow<VpnUiState> = combine(
         _nodes,
@@ -139,10 +147,10 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 nodes.firstOrNull {
                     it.id == prefs.selectedNodeId ||
                         it.countryCode.equals(prefs.selectedNodeId.removePrefix("country-"), ignoreCase = true)
-                } ?: fastestVerified
+                } ?: prefs.lastSelectedNode ?: fastestVerified
             }
         } else {
-            fastestVerified
+            if (nodes.isNotEmpty()) fastestVerified else (prefs.lastSelectedNode ?: fastestVerified)
         }
 
         val query = filter.searchQuery.trim().lowercase(Locale.US)
@@ -204,6 +212,48 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
         syncLivePublicNodes(silent = true)
         startRealtimePingMonitor()
+
+        viewModelScope.launch {
+            val initialPrefs = runCatching { repository.preferencesFlow.first() }.getOrNull()
+            if (initialPrefs != null && !startupAutoConnectConsumed) {
+                startupAutoConnectConsumed = true
+                if (initialPrefs.autoConnectOnStartup) {
+                    val statusNow = AetherVpnStateBus.telemetry.value.status
+                    if (statusNow != TunnelConnectionStatus.CONNECTED &&
+                        statusNow != TunnelConnectionStatus.CONNECTING
+                    ) {
+                        val isManual = !initialPrefs.autoSelectFastest
+                        val savedTarget = initialPrefs.lastSelectedNode?.takeIf { it.ipAddress.isNotBlank() }
+                        val resolvedTarget = savedTarget ?: run {
+                            val liveList = _nodes.first { list -> list.any { it.ipAddress.isNotBlank() } }
+                            if (isManual) {
+                                liveList.firstOrNull {
+                                    it.id == initialPrefs.selectedNodeId ||
+                                        it.countryCode.equals(
+                                            initialPrefs.selectedNodeId.removePrefix("country-"),
+                                            ignoreCase = true
+                                        )
+                                } ?: liveList.firstOrNull { it.ipAddress.isNotBlank() }
+                            } else {
+                                liveList.filter { it.isVerifiedWorking && it.pingMs > 0 }
+                                    .minByOrNull { it.pingMs }
+                                    ?: liveList.firstOrNull { it.ipAddress.isNotBlank() }
+                            }
+                        }
+                        if (resolvedTarget != null) {
+                            AetherVpnStateBus.recordDiagnostic(
+                                phase = "Auto-Connect Startup",
+                                serverLabel = "${resolvedTarget.flagEmoji} ${resolvedTarget.countryName}",
+                                summary = "Auto-connecting on app launch",
+                                detail = "Connecting last selected server (${resolvedTarget.ipAddress}:${resolvedTarget.port}) per startup preference.",
+                                severity = VpnDiagnosticSeverity.INFO
+                            )
+                            _pendingStartupConnect.value = resolvedTarget to isManual
+                        }
+                    }
+                }
+            }
+        }
 
         viewModelScope.launch {
             repository.preferencesFlow
@@ -419,7 +469,11 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         viewModelScope.launch {
-            repository.setSelectedNode("auto_fastest", isAutoFastest = true)
+            repository.setSelectedNode(
+                nodeId = "auto_fastest",
+                isAutoFastest = true,
+                node = fastest.takeIf { it.ipAddress.isNotBlank() }
+            )
         }
         return fastest
     }
@@ -481,7 +535,7 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         viewModelScope.launch {
-            repository.setSelectedNode(node.id, isAutoFastest = false)
+            repository.setSelectedNode(node.id, isAutoFastest = false, node = node)
         }
     }
 
@@ -514,6 +568,33 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             repository.updateWifiOnlyLatencyCheck(wifiOnly)
         }
+    }
+
+    fun setAutoConnectOnStartup(enabled: Boolean) {
+        val lastServer = uiState.value.preferences.lastSelectedNode
+            ?: uiState.value.selectedNode.takeIf { it.ipAddress.isNotBlank() }
+        val serverSummary = lastServer?.let { "${it.flagEmoji} ${it.countryName}" } ?: "last selected server"
+        AetherVpnStateBus.recordDiagnostic(
+            phase = "Startup Policy",
+            serverLabel = "Auto-Connect",
+            summary = if (enabled) "Auto-Connect on Startup Enabled" else "Auto-Connect on Startup Disabled",
+            detail = if (enabled) {
+                "App will automatically connect using $serverSummary upon launch."
+            } else {
+                "Manual orb tap required when app opens."
+            },
+            severity = VpnDiagnosticSeverity.INFO
+        )
+        viewModelScope.launch {
+            if (lastServer != null && lastServer.ipAddress.isNotBlank()) {
+                repository.saveLastSelectedNode(lastServer)
+            }
+            repository.updateAutoConnectOnStartup(enabled)
+        }
+    }
+
+    fun consumePendingStartupConnect() {
+        _pendingStartupConnect.value = null
     }
 
     fun syncLivePublicNodes(silent: Boolean = false) {
@@ -694,28 +775,16 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        val intent = Intent(context, AetherVpnService::class.java).apply {
-            action = AetherVpnService.ACTION_CONNECT
-            putExtra(AetherVpnService.EXTRA_NODE_ID, targetNode.id)
-            putExtra(AetherVpnService.EXTRA_NODE_HOSTNAME, targetNode.hostName)
-            putExtra(AetherVpnService.EXTRA_NODE_IP, targetNode.ipAddress)
-            putExtra(AetherVpnService.EXTRA_NODE_PORT, targetNode.port)
-            putExtra(AetherVpnService.EXTRA_NODE_COUNTRY, targetNode.countryName)
-            putExtra(AetherVpnService.EXTRA_NODE_COUNTRY_CODE, targetNode.countryCode)
-            putExtra(AetherVpnService.EXTRA_NODE_CITY, targetNode.cityName)
-            putExtra(AetherVpnService.EXTRA_NODE_FLAG, targetNode.flagEmoji)
-            putExtra(AetherVpnService.EXTRA_NODE_PING, targetNode.pingMs)
-            putExtra(AetherVpnService.EXTRA_NODE_OPERATOR, targetNode.operatorName)
-            putExtra(AetherVpnService.EXTRA_NODE_PROTOCOL, targetNode.protocol.name)
-            putExtra(AetherVpnService.EXTRA_NODE_RELAY_TYPE, targetNode.relayType.name)
-            putExtra(AetherVpnService.EXTRA_NODE_USERNAME, targetNode.username)
-            putExtra(AetherVpnService.EXTRA_NODE_PASSWORD, targetNode.password)
-            putExtra(AetherVpnService.EXTRA_NODE_EXIT_IP, targetNode.verifiedExitIp)
-            putExtra(AetherVpnService.EXTRA_NODE_VERIFIED, targetNode.isVerifiedWorking)
-            putExtra(AetherVpnService.EXTRA_NODE_IS_CUSTOM, targetNode.isCustomNode)
-            putExtra(AetherVpnService.EXTRA_IS_MANUAL_SELECTION, isManualSelection)
-            putExtra(AetherVpnService.EXTRA_DNS_SERVER, prefs.dnsServer)
+        viewModelScope.launch {
+            repository.saveLastSelectedNode(targetNode)
         }
+
+        val intent = AVpnQuickTileService.buildConnectServiceIntent(
+            context = context,
+            node = targetNode,
+            isManualSelection = isManualSelection,
+            dnsServer = prefs.dnsServer
+        )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             context.startForegroundService(intent)
         } else {
