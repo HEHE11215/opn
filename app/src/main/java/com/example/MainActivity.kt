@@ -468,7 +468,8 @@ fun AVpnRootApp(
                                 },
                                 onToggleWifiOnlyLatency = viewModel::setWifiOnlyLatencyCheck,
                                 onToggleAutoConnectOnStartup = viewModel::setAutoConnectOnStartup,
-                                onRequestAddQuickTile = requestAddQuickSettingsTile
+                                onRequestAddQuickTile = requestAddQuickSettingsTile,
+                                onRenewSshAccount = viewModel::renewEphemeralSshAccountNow
                             )
                         }
 
@@ -933,7 +934,7 @@ private fun AddCustomNodeDialog(
     var ipAddress by remember { mutableStateOf("") }
     var portText by remember { mutableStateOf("1080") }
     var operatorName by remember { mutableStateOf("") }
-    var selectedRelayType by remember { mutableStateOf(RelayTunnelType.SOCKS5) }
+    var selectedRelayType by remember { mutableStateOf(RelayTunnelType.SSH_TUNNEL) }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
 
@@ -968,26 +969,30 @@ private fun AddCustomNodeDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    text = "Add Custom / Pro Server",
+                    text = "Add Custom SSH / WireGuard Server",
                     style = MaterialTheme.typography.titleLarge.copy(
                         fontWeight = FontWeight.Bold
                     ),
                     color = MaterialTheme.colorScheme.onSurface
                 )
 
-                // Protocol Type Switcher: SOCKS5 vs HTTPS CONNECT
+                // Protocol Type Switcher: SSH-2 High-BW vs WireGuard vs SSH Dynamic vs SSH TLS 443
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    listOf(RelayTunnelType.SOCKS5, RelayTunnelType.HTTP_CONNECT).forEach { type ->
+                    listOf(
+                        RelayTunnelType.SSH_TUNNEL,
+                        RelayTunnelType.WIREGUARD_TUNNEL,
+                        RelayTunnelType.HTTP_CONNECT
+                    ).forEach { type ->
                         val active = selectedRelayType == type
                         Surface(
                             onClick = {
                                 selectedRelayType = type
                                 if (portText == "1080" && type == RelayTunnelType.HTTP_CONNECT) {
-                                    portText = "8080"
-                                } else if (portText == "8080" && type == RelayTunnelType.SOCKS5) {
+                                    portText = "443"
+                                } else if (portText == "443" && type != RelayTunnelType.HTTP_CONNECT) {
                                     portText = "1080"
                                 }
                             },
@@ -1011,13 +1016,15 @@ private fun AddCustomNodeDialog(
                                     text = type.badgeLabel,
                                     style = MaterialTheme.typography.labelLarge.copy(
                                         fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
-                                        fontSize = 11.sp
+                                        fontSize = 10.5.sp
                                     ),
                                     color = if (active) {
                                         MaterialTheme.colorScheme.onPrimaryContainer
                                     } else {
                                         MaterialTheme.colorScheme.onSurfaceVariant
-                                    }
+                                    },
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         }

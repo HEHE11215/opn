@@ -563,9 +563,9 @@ private fun CountryServerRowCard(
                         maxLines = 1
                     )
                     val metaLabel = if (node.verifiedExitIp.isNotEmpty()) {
-                        "• ${node.relayType.badgeLabel} • ${node.verifiedExitIp}"
+                        "• ${node.remainingValidityLabel()} • ${node.verifiedExitIp}"
                     } else {
-                        "• ${node.cityName} • ${node.relayType.badgeLabel}"
+                        "• ${node.remainingValidityLabel()} • ${node.relayType.badgeLabel}"
                     }
                     Text(
                         text = metaLabel,

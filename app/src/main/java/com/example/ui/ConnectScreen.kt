@@ -189,6 +189,7 @@ fun ConnectScreen(
     onToggleWifiOnlyLatency: (Boolean) -> Unit = {},
     onToggleAutoConnectOnStartup: (Boolean) -> Unit = {},
     onRequestAddQuickTile: () -> Unit = {},
+    onRenewSshAccount: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val status = uiState.telemetry.status
@@ -320,7 +321,7 @@ fun ConnectScreen(
                             TunnelConnectionStatus.CONNECTING -> {
                                 val pingLabel = if (displayNode.pingMs > 0) "${displayNode.pingMs} ms" else "Verifying…"
                                 Text(
-                                    text = "Verifying TLS & Starting TUN0…",
+                                    text = "Provisioning 4-Day SSH/WG & Starting TUN0…",
                                     style = MaterialTheme.typography.titleLarge.copy(
                                         fontWeight = FontWeight.Bold
                                     ),
@@ -370,9 +371,9 @@ fun ConnectScreen(
                                 )
                                 Spacer(modifier = Modifier.height(3.dp))
                                 val standbySubtitle = if (displayNode.ipAddress.isBlank()) {
-                                    "Scanning TLS-verified relays…"
+                                    "Auto-provisioning 4-day SSH/WG high-bandwidth servers…"
                                 } else {
-                                    "${displayNode.flagEmoji} ${displayNode.countryName} • ⚡ $pingLabel • ${displayNode.relayType.badgeLabel}"
+                                    "${displayNode.flagEmoji} ${displayNode.countryName} • ⚡ $pingLabel • ${displayNode.remainingValidityLabel()}"
                                 }
                                 Text(
                                     text = standbySubtitle,
@@ -484,6 +485,14 @@ fun ConnectScreen(
             )
         }
 
+        // 2b. Auto-Provisioned 4-Day Free SSH / WireGuard High-Bandwidth Account Card
+        item {
+            EphemeralSshAccountCard(
+                node = displayNode,
+                onRenewAccount = onRenewSshAccount
+            )
+        }
+
         // 3. Download & Upload Cards
         item {
             Row(
@@ -561,6 +570,113 @@ fun ConnectScreen(
                     ?: uiState.telemetry.handshakeSummary.ifBlank { "Tap to inspect handshake logs" },
                 onClick = onOpenConnectionLogs
             )
+        }
+    }
+}
+
+@Composable
+fun EphemeralSshAccountCard(
+    node: VpnNode,
+    onRenewAccount: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val accountUser = node.username.ifEmpty { "ssh-auto-highbw" }
+    val validityBadge = node.remainingValidityLabel()
+
+    M3SectionCard(
+        cornerRadius = 16.dp,
+        modifier = modifier
+            .fillMaxWidth()
+            .widthIn(max = 600.dp)
+            .testTag("ephemeral_ssh_account_card")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = EmeraldConnected.copy(alpha = 0.14f),
+                modifier = Modifier.size(40.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = null,
+                        tint = EmeraldConnected,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Free SSH / WG Account",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = EmeraldConnected.copy(alpha = 0.14f)
+                    ) {
+                        Text(
+                            text = validityBadge,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 10.sp
+                            ),
+                            color = EmeraldConnected,
+                            maxLines = 1,
+                            softWrap = false,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "ID: $accountUser • Auto-fetches new 4-day high-bandwidth session on connect",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Surface(
+                onClick = onRenewAccount,
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag("renew_ssh_account_button")
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = "New 4d",
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        ),
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+            }
         }
     }
 }

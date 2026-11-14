@@ -753,13 +753,61 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Explicitly provisions a brand-new 4-day (3-to-5-day) SSH/WireGuard high-bandwidth account
+     * for the active or selected server and updates the UI state immediately.
+     */
+    fun renewEphemeralSshAccountNow() {
+        val currentTarget = uiState.value.telemetry.activeNode ?: uiState.value.selectedNode
+        viewModelScope.launch {
+            val freshNode = com.example.vpn.EphemeralAccountProvisioner.ensureFreshAccountForConnection(
+                context = getApplication(),
+                node = currentTarget,
+                forceRenew = true
+            )
+            _nodes.update { list ->
+                list.map {
+                    if (it.countryCode.equals(freshNode.countryCode, ignoreCase = true)) {
+                        it.copy(
+                            username = freshNode.username,
+                            password = freshNode.password,
+                            accountExpiresAtEpochMs = freshNode.accountExpiresAtEpochMs,
+                            wireguardPublicKey = freshNode.wireguardPublicKey,
+                            provisionedAccountId = freshNode.provisionedAccountId
+                        )
+                    } else {
+                        it
+                    }
+                }
+            }
+            if (_filterState.value.manualSelectedNodeOverride != null) {
+                _filterState.update { it.copy(manualSelectedNodeOverride = freshNode) }
+            }
+            AetherVpnStateBus.updateTelemetry { current ->
+                if (current.activeNode != null) {
+                    current.copy(activeNode = freshNode)
+                } else {
+                    current
+                }
+            }
+            repository.saveLastSelectedNode(freshNode)
+            showEventPopup(
+                title = "New 4-Day SSH/WG Account!",
+                subtitle = "User: ${freshNode.username} • Full Bandwidth Active for ${freshNode.countryName}",
+                flagEmoji = freshNode.flagEmoji,
+                detailBadge = freshNode.remainingValidityLabel(),
+                tone = VpnPopupTone.CONNECTED
+            )
+        }
+    }
+
     fun startVpnServiceWithNode(
         context: Context,
         node: VpnNode = uiState.value.selectedNode,
         isManualSelection: Boolean = !uiState.value.isAutoFastestMode
     ) {
         val prefs = uiState.value.preferences
-        val targetNode = if (isManualSelection) {
+        val rawTargetNode = if (isManualSelection) {
             node
         } else {
             _nodes.value.filter { it.isVerifiedWorking && it.pingMs > 0 }.minByOrNull { it.pingMs }
@@ -767,15 +815,25 @@ class VpnViewModel(application: Application) : AndroidViewModel(application) {
                 ?: node
         }
 
-        if (targetNode.ipAddress.isBlank()) {
+        if (rawTargetNode.ipAddress.isBlank()) {
             fetchLatestAndConnectFastestNow { resolvedNode ->
                 startVpnServiceWithNode(context, resolvedNode, isManualSelection = false)
             }
             return
         }
 
+        val targetNode = com.example.vpn.EphemeralAccountProvisioner.attachCachedOrQuickAccount(
+            context = context,
+            node = rawTargetNode
+        )
+
         viewModelScope.launch {
-            repository.saveLastSelectedNode(targetNode)
+            val freshProvisioned = com.example.vpn.EphemeralAccountProvisioner.ensureFreshAccountForConnection(
+                context = context,
+                node = targetNode,
+                forceRenew = !targetNode.hasValidEphemeralAccount()
+            )
+            repository.saveLastSelectedNode(freshProvisioned)
         }
 
         val intent = AVpnQuickTileService.buildConnectServiceIntent(

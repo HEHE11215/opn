@@ -165,19 +165,21 @@ class LocalTunnelGateway(
     }
 
     /**
-     * Opens an upstream TCP tunnel socket STRICTLY through the active verified remote exit server.
-     * Important: Individual connection timeouts (e.g. a single blocked port or slow website) NEVER
-     * overwrite [primaryNode] or switch the user's connected server/country!
+     * Opens a high-bandwidth upstream TCP tunnel socket STRICTLY through the active locked server.
+     * Uses 256KB socket window buffers and fast retry on the same server so browser & video streams
+     * achieve maximum throughput without ever switching the user's connected server/country.
      */
     fun openRemoteTunnelSocket(targetHost: String, targetPort: Int): Socket? {
         val currentPrimary = primaryNode ?: return null
+        val useCustomAuth = currentPrimary.isCustomNode
 
-        // 1. Primary attempt on the connected server with generous timeout so active sessions stay locked
+        // 1. Fast primary attempt on the locked server (2200ms timeout)
         val primarySock = connectViaRelayNode(
             node = currentPrimary,
             targetHost = targetHost,
             targetPort = targetPort,
-            timeoutMs = 3800,
+            timeoutMs = 2200,
+            useExplicitProxyAuth = useCustomAuth,
             protectSocket = protectSocketFn,
             protectDatagram = protectDatagramFn
         )
@@ -185,12 +187,13 @@ class LocalTunnelGateway(
             return primarySock
         }
 
-        // 2. Quick second retry on the exact same connected server before giving up on this socket
+        // 2. Immediate second attempt on the exact same connected server (2600ms timeout)
         val retryPrimarySock = connectViaRelayNode(
             node = currentPrimary,
             targetHost = targetHost,
             targetPort = targetPort,
-            timeoutMs = 2800,
+            timeoutMs = 2600,
+            useExplicitProxyAuth = useCustomAuth,
             protectSocket = protectSocketFn,
             protectDatagram = protectDatagramFn
         )
@@ -203,7 +206,7 @@ class LocalTunnelGateway(
             return null
         }
 
-        // 3. Optional same-country backup assist for this single socket ONLY (never mutates primaryNode or switches country!)
+        // 3. Same-country high-bandwidth assist for this single socket ONLY (never mutates primaryNode or switches country!)
         val sameCountryBackups = (fallbackVerifiedNodes +
             AetherVpnStateBus.verifiedBackupPool.value +
             AetherVpnStateBus.nodePool.value)
@@ -222,7 +225,8 @@ class LocalTunnelGateway(
                 node = backup,
                 targetHost = targetHost,
                 targetPort = targetPort,
-                timeoutMs = 2500,
+                timeoutMs = 2200,
+                useExplicitProxyAuth = false,
                 protectSocket = protectSocketFn,
                 protectDatagram = protectDatagramFn
             )
@@ -237,12 +241,12 @@ class LocalTunnelGateway(
     private suspend fun handleClientConnection(client: Socket) = withContext(Dispatchers.IO) {
         var upstreamSocket: Socket? = null
         try {
-            client.soTimeout = 35_000
+            client.soTimeout = 45_000
             client.tcpNoDelay = true
             client.keepAlive = true
-            client.receiveBufferSize = 131_072
-            client.sendBufferSize = 131_072
-            val clientIn = BufferedInputStream(client.getInputStream(), 32_768)
+            client.receiveBufferSize = 262_144
+            client.sendBufferSize = 262_144
+            val clientIn = BufferedInputStream(client.getInputStream(), 65_536)
             val clientOut = client.getOutputStream()
 
             val headerBytes = readHttpHeaderBlock(clientIn) ?: return@withContext
@@ -411,7 +415,7 @@ class LocalTunnelGateway(
     }
 
     private fun pipeStreams(input: InputStream, output: OutputStream, isUpload: Boolean) {
-        val buffer = ByteArray(64 * 1024)
+        val buffer = ByteArray(128 * 1024)
         try {
             while (true) {
                 val read = input.read(buffer)
@@ -689,6 +693,8 @@ class LocalTunnelGateway(
             val targetHost = "api.ipify.org"
             val targetPort = 443
             val resolvedTargetIpv4 = resolveIpv4Protected(targetHost, protectDatagram)
+            val authUser = if (node.isCustomNode) node.username else ""
+            val authPass = if (node.isCustomNode) node.password else ""
 
             var lastFailureStage = "Handshake Failed"
             var lastFailureDetail = "Relay closed connection without completing TLS probe."
@@ -698,6 +704,8 @@ class LocalTunnelGateway(
                 try {
                     protectSocket?.invoke(rawSocket)
                     rawSocket.tcpNoDelay = true
+                    rawSocket.receiveBufferSize = 262_144
+                    rawSocket.sendBufferSize = 262_144
                     rawSocket.soTimeout = timeoutMs
 
                     val startNs = System.nanoTime()
@@ -724,14 +732,16 @@ class LocalTunnelGateway(
                     val output = rawSocket.getOutputStream()
 
                     val handshakeOk = when (candidateType) {
+                        RelayTunnelType.SSH_TUNNEL,
+                        RelayTunnelType.WIREGUARD_TUNNEL,
                         RelayTunnelType.SOCKS5 -> performSocks5Connect(
                             input = input,
                             output = output,
                             targetHost = targetHost,
                             resolvedIpv4 = resolvedTargetIpv4,
                             targetPort = targetPort,
-                            username = node.username,
-                            password = node.password
+                            username = authUser,
+                            password = authPass
                         )
                         RelayTunnelType.SOCKS4 -> performSocks4aConnect(
                             input = input,
@@ -745,14 +755,14 @@ class LocalTunnelGateway(
                             output = output,
                             targetHost = targetHost,
                             targetPort = targetPort,
-                            username = node.username,
-                            password = node.password
+                            username = authUser,
+                            password = authPass
                         )
                     }
 
                     if (!handshakeOk) {
                         lastFailureStage = "${candidateType.badgeLabel} Handshake Failed"
-                        lastFailureDetail = if (node.username.isNotEmpty()) {
+                        lastFailureDetail = if (authUser.isNotEmpty()) {
                             "Relay rejected ${candidateType.badgeLabel} auth or refused CONNECT to $targetHost:$targetPort."
                         } else {
                             "Relay closed or rejected ${candidateType.badgeLabel} CONNECT tunnel to $targetHost:$targetPort."
@@ -871,13 +881,14 @@ class LocalTunnelGateway(
         }
 
         /**
-         * Opens a tunnel socket through [node] to [targetHost]:[targetPort] using [protectSocket].
+         * Opens a high-bandwidth tunnel socket through [node] to [targetHost]:[targetPort] using [protectSocket].
          */
         fun connectViaRelayNode(
             node: VpnNode,
             targetHost: String,
             targetPort: Int,
             timeoutMs: Int = 3500,
+            useExplicitProxyAuth: Boolean = node.isCustomNode,
             protectSocket: ((Socket) -> Boolean)? = AetherVpnStateBus.protectSocketCallback,
             protectDatagram: ((DatagramSocket) -> Boolean)? = AetherVpnStateBus.protectDatagramCallback
         ): Socket? {
@@ -893,6 +904,8 @@ class LocalTunnelGateway(
             }
 
             val resolvedIpv4 = resolveIpv4Protected(targetHost, protectDatagram)
+            val authUser = if (useExplicitProxyAuth) node.username else ""
+            val authPass = if (useExplicitProxyAuth) node.password else ""
 
             for (type in orderedTypes) {
                 val socket = Socket()
@@ -900,8 +913,8 @@ class LocalTunnelGateway(
                     protectSocket?.invoke(socket)
                     socket.tcpNoDelay = true
                     socket.keepAlive = true
-                    socket.receiveBufferSize = 131_072
-                    socket.sendBufferSize = 131_072
+                    socket.receiveBufferSize = 262_144
+                    socket.sendBufferSize = 262_144
                     socket.soTimeout = timeoutMs + 1500
                     socket.connect(InetSocketAddress(node.ipAddress, node.port), timeoutMs)
 
@@ -909,14 +922,16 @@ class LocalTunnelGateway(
                     val output = socket.getOutputStream()
 
                     val handshakeOk = when (type) {
+                        RelayTunnelType.SSH_TUNNEL,
+                        RelayTunnelType.WIREGUARD_TUNNEL,
                         RelayTunnelType.SOCKS5 -> performSocks5Connect(
                             input = input,
                             output = output,
                             targetHost = targetHost,
                             resolvedIpv4 = resolvedIpv4,
                             targetPort = targetPort,
-                            username = node.username,
-                            password = node.password
+                            username = authUser,
+                            password = authPass
                         )
                         RelayTunnelType.SOCKS4 -> performSocks4aConnect(
                             input = input,
@@ -930,13 +945,13 @@ class LocalTunnelGateway(
                             output = output,
                             targetHost = targetHost,
                             targetPort = targetPort,
-                            username = node.username,
-                            password = node.password
+                            username = authUser,
+                            password = authPass
                         )
                     }
 
                     if (handshakeOk) {
-                        socket.soTimeout = 35_000
+                        socket.soTimeout = 45_000
                         return socket
                     } else {
                         socket.close()

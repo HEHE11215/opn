@@ -210,24 +210,31 @@ class AetherVpnService : VpnService() {
 
         tunnelJob = serviceScope.launch {
             try {
+                // Automatically fetch/provision a free 4-day (3-to-5-day) SSH/WireGuard high-bandwidth account
+                val provisionedTarget = EphemeralAccountProvisioner.ensureFreshAccountForConnection(
+                    context = this@AetherVpnService,
+                    node = requestedNode,
+                    forceRenew = !requestedNode.hasValidEphemeralAccount()
+                )
+
                 val knownDirectIp = AetherVpnStateBus.telemetry.value.deviceDirectIp
                     ?: LocalTunnelGateway.fetchDeviceDirectIp(protectSocketFn)
 
                 AetherVpnStateBus.updateTelemetry { prev ->
                     TunnelTelemetry(
                         status = TunnelConnectionStatus.CONNECTING,
-                        activeNode = requestedNode,
+                        activeNode = provisionedTarget,
                         deviceDirectIp = knownDirectIp,
-                        verifiedExitIp = requestedNode.verifiedExitIp.ifEmpty { null },
-                        verifiedExitCountry = requestedNode.countryName,
-                        verifiedExitCity = requestedNode.cityName,
+                        verifiedExitIp = provisionedTarget.verifiedExitIp.ifEmpty { null },
+                        verifiedExitCountry = provisionedTarget.countryName,
+                        verifiedExitCity = provisionedTarget.cityName,
                         activeDnsServer = dnsServer,
                         activeMtu = DEFAULT_MTU,
-                        activeProtocol = requestedNode.protocol,
+                        activeProtocol = provisionedTarget.protocol,
                         isForegroundServiceActive = isForegroundActive,
                         bytesDownloaded = prev.bytesDownloaded,
                         bytesUploaded = prev.bytesUploaded,
-                        handshakeSummary = "Connecting ${requestedNode.flagEmoji} ${requestedNode.countryName}…",
+                        handshakeSummary = "Provisioning 4-day SSH/WG & connecting ${provisionedTarget.flagEmoji} ${provisionedTarget.countryName}…",
                         lastFailureStage = prev.lastFailureStage,
                         lastFailureReason = prev.lastFailureReason,
                         lastFailedServerLabel = prev.lastFailedServerLabel,
@@ -238,27 +245,27 @@ class AetherVpnService : VpnService() {
 
                 AetherVpnStateBus.recordDiagnostic(
                     phase = "Connecting",
-                    serverLabel = formatNodeLabel(requestedNode),
-                    summary = "Initiating TLS & Tunnel Probe",
-                    detail = "Testing ${requestedNode.relayType.badgeLabel} relay via protected socket",
+                    serverLabel = formatNodeLabel(provisionedTarget),
+                    summary = "SSH/WG Account Ready (${provisionedTarget.username.ifEmpty { "auto" }})",
+                    detail = "Testing ${provisionedTarget.relayType.badgeLabel} high-bandwidth tunnel via protected socket",
                     severity = VpnDiagnosticSeverity.INFO
                 )
 
                 // Parallel hedged verification (~0.5–3s instead of long sequential blocking)
                 val verificationOutcome = verifyTargetOrFailoverRelayParallel(
-                    requestedNode = requestedNode,
+                    requestedNode = provisionedTarget,
                     isManualSelection = isManualSelection,
                     deviceDirectIp = knownDirectIp
                 )
-                val activeNode = verificationOutcome.winner
+                val verifiedWinner = verificationOutcome.winner
 
-                if (activeNode == null) {
+                if (verifiedWinner == null) {
                     val stage = verificationOutcome.failureStage ?: "Handshake Failed"
                     val detail = verificationOutcome.failureDetail
                         ?: "All candidate relays failed TLS & Exit-IP verification."
                     AetherVpnStateBus.recordDiagnostic(
                         phase = stage,
-                        serverLabel = formatNodeLabel(requestedNode),
+                        serverLabel = formatNodeLabel(provisionedTarget),
                         summary = stage,
                         detail = detail,
                         severity = VpnDiagnosticSeverity.ERROR
@@ -267,15 +274,22 @@ class AetherVpnService : VpnService() {
                         it.copy(
                             status = TunnelConnectionStatus.ERROR,
                             handshakeSummary = stage,
-                            errorMessage = "${formatNodeLabel(requestedNode)}: $stage — $detail",
+                            errorMessage = "${formatNodeLabel(provisionedTarget)}: $stage — $detail",
                             lastFailureStage = stage,
                             lastFailureReason = "$stage: $detail",
-                            lastFailedServerLabel = formatNodeLabel(requestedNode)
+                            lastFailedServerLabel = formatNodeLabel(provisionedTarget)
                         )
                     }
                     stopVpnTunnel(preserveError = true)
                     return@launch
                 }
+
+                // Ensure the winning node carries its active 4-day SSH/WireGuard high-bandwidth account
+                val activeNode = EphemeralAccountProvisioner.ensureFreshAccountForConnection(
+                    context = this@AetherVpnService,
+                    node = verifiedWinner,
+                    forceRenew = false
+                )
 
                 val verifiedBackups = (AetherVpnStateBus.verifiedBackupPool.value + AetherVpnStateBus.nodePool.value)
                     .filter { it.isVerifiedWorking && it.ipAddress.isNotBlank() }

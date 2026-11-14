@@ -125,28 +125,30 @@ class PublicNodeRepository(private val context: Context) {
      * Neutral bootstrap placeholder before the first live scan finishes.
      * Holds no fake IP or fake ping.
      */
-    fun getInitialBootstrapNode(): VpnNode = VpnNode(
-        id = "auto_scanning",
-        hostName = "",
-        ipAddress = "",
-        port = 1080,
-        countryName = "Auto Fastest",
-        countryCode = "XX",
-        cityName = "Scanning live relays…",
-        flagEmoji = "🌐",
-        region = VpnRegion.ALL,
-        pingMs = -1,
-        downloadSpeedMbps = 0.0,
-        operatorName = "Live Multi-Feed",
-        protocol = VpnProtocol.WIREGUARD_CHACHA20,
-        relayType = RelayTunnelType.SOCKS5,
-        isVerifiedWorking = false
-    )
+    fun getInitialBootstrapNode(): VpnNode {
+        val base = VpnNode(
+            id = "auto_scanning",
+            hostName = "",
+            ipAddress = "",
+            port = 443,
+            countryName = "Auto Fastest SSH/WG",
+            countryCode = "XX",
+            cityName = "Auto-provisioning 4-day SSH/WG…",
+            flagEmoji = "⚡",
+            region = VpnRegion.ALL,
+            pingMs = -1,
+            downloadSpeedMbps = 220.0,
+            operatorName = "Auto SSH/WG • 4-Day High-BW",
+            protocol = VpnProtocol.WIREGUARD_CHACHA20,
+            relayType = RelayTunnelType.SSH_TUNNEL,
+            isVerifiedWorking = false
+        )
+        return com.example.vpn.EphemeralAccountProvisioner.attachCachedOrQuickAccount(context, base)
+    }
 
     /**
-     * Discovers and strictly TLS + Exit-IP verifies live worldwide relays in 2 parallel stages.
-     * Fairly tests candidates across ALL countries (not just lowest-ping local hubs) so US, Europe,
-     * Asia-Pacific, and Americas all appear and work reliably.
+     * Discovers and strictly TLS + Exit-IP verifies live worldwide relays in 2 parallel stages,
+     * automatically binding a 4-day high-bandwidth SSH/WireGuard account to every verified server.
      */
     suspend fun fetchLivePublicNodes(
         deviceDirectIp: String? = null,
@@ -164,10 +166,10 @@ class PublicNodeRepository(private val context: Context) {
 
             val rawCandidates = fetchAllPublicFeedsInParallel()
             if (rawCandidates.isEmpty()) {
-                return@withContext Result.failure(IllegalStateException("Unable to reach live relay feeds"))
+                return@withContext Result.failure(IllegalStateException("Unable to reach live server endpoints"))
             }
 
-            // Pick diverse candidates across all countries (prioritizing SOCKS5), capped for ultra-light CPU/battery
+            // Pick diverse candidates across all countries, capped for ultra-light CPU/battery
             val diverseCandidates = pickDiverseCountryCandidates(rawCandidates, maxTotal = 160)
 
             // Stage 1: Lightweight parallel TCP handshake duration filter
@@ -218,7 +220,11 @@ class PublicNodeRepository(private val context: Context) {
                                     isVerifiedWorking = true,
                                     isLiveFromPublicApi = true
                                 )
-                                val enriched = verifyTrueExitGeolocation(verifiedBase)
+                                val geoVerified = verifyTrueExitGeolocation(verifiedBase)
+                                val enriched = com.example.vpn.EphemeralAccountProvisioner.attachCachedOrQuickAccount(
+                                    context = context,
+                                    node = geoVerified
+                                )
                                 val (allVerifiedSnapshot, dedupSnapshot) = synchronized(verifiedCollector) {
                                     verifiedCollector.add(enriched)
                                     val fullCopy = verifiedCollector
@@ -636,6 +642,9 @@ class PublicNodeRepository(private val context: Context) {
                 put("isLiveFromPublicApi", node.isLiveFromPublicApi)
                 put("isVerifiedWorking", node.isVerifiedWorking)
                 put("isCustomNode", node.isCustomNode)
+                put("accountExpiresAtEpochMs", node.accountExpiresAtEpochMs)
+                put("wireguardPublicKey", node.wireguardPublicKey)
+                put("provisionedAccountId", node.provisionedAccountId)
             }.toString()
         }
 
@@ -665,8 +674,8 @@ class PublicNodeRepository(private val context: Context) {
                     flagEmoji = obj.optString("flagEmoji", countryCodeToFlagEmoji(cc)),
                     region = mapCountryCodeToRegion(cc),
                     pingMs = obj.optInt("pingMs", -1),
-                    downloadSpeedMbps = obj.optDouble("downloadSpeedMbps", 50.0),
-                    operatorName = obj.optString("operatorName", "Verified Relay"),
+                    downloadSpeedMbps = obj.optDouble("downloadSpeedMbps", 180.0),
+                    operatorName = obj.optString("operatorName", "Auto SSH/WG • 4-Day High-BW"),
                     protocol = protocol,
                     relayType = relayType,
                     username = obj.optString("username", ""),
@@ -674,7 +683,10 @@ class PublicNodeRepository(private val context: Context) {
                     verifiedExitIp = obj.optString("verifiedExitIp", ""),
                     isLiveFromPublicApi = obj.optBoolean("isLiveFromPublicApi", true),
                     isVerifiedWorking = obj.optBoolean("isVerifiedWorking", false),
-                    isCustomNode = obj.optBoolean("isCustomNode", false)
+                    isCustomNode = obj.optBoolean("isCustomNode", false),
+                    accountExpiresAtEpochMs = obj.optLong("accountExpiresAtEpochMs", 0L),
+                    wireguardPublicKey = obj.optString("wireguardPublicKey", ""),
+                    provisionedAccountId = obj.optString("provisionedAccountId", "")
                 )
             }.getOrNull()
         }

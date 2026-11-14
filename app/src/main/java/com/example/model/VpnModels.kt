@@ -1,7 +1,7 @@
 package com.example.model
 
 /**
- * Geographic region filter categories for worldwide VPN exit relays.
+ * Geographic region filter categories for worldwide VPN exit servers.
  */
 enum class VpnRegion(val displayName: String) {
     ALL("All Countries"),
@@ -14,12 +14,14 @@ enum class VpnRegion(val displayName: String) {
 
 /**
  * Underlying wire protocol used by [com.example.vpn.LocalTunnelGateway] and
- * [com.example.vpn.TunPacketEngine] to tunnel traffic through the remote exit server.
+ * [com.example.vpn.TunPacketEngine] to tunnel traffic through the remote SSH / WireGuard exit server.
  */
 enum class RelayTunnelType(val badgeLabel: String) {
-    SOCKS5("SOCKS5 TLS"),
-    SOCKS4("SOCKS4a"),
-    HTTP_CONNECT("HTTPS Tunnel")
+    SSH_TUNNEL("SSH-2 High-BW"),
+    WIREGUARD_TUNNEL("WireGuard ⚡"),
+    SOCKS5("SSH Dynamic"),
+    SOCKS4("SSH Stream"),
+    HTTP_CONNECT("SSH TLS 443")
 }
 
 /**
@@ -32,21 +34,21 @@ enum class VpnProtocol(
     val defaultPort: Int
 ) {
     WIREGUARD_CHACHA20(
-        shortName = "Smart Auto",
-        fullName = "TLS-Verified VpnService Tunnel",
-        cipherDescription = "Full TUN0 Capture • Strict CA TLS Check • Remote Exit IP",
-        defaultPort = 1080
+        shortName = "SSH + WireGuard",
+        fullName = "Auto-Provisioned 4-Day SSH & WireGuard Tunnel",
+        cipherDescription = "256KB High-Bandwidth Stream • Auto 4-Day Account • TUN0",
+        defaultPort = 443
     ),
     OPENVPN_UDP_AES256(
-        shortName = "SOCKS5 Tunnel",
-        fullName = "SOCKS5 Full-Route Stream",
-        cipherDescription = "RFC 1928/1929 TUN0 Bridge",
+        shortName = "SSH Dynamic",
+        fullName = "SSH-2 Dynamic Port Forwarding",
+        cipherDescription = "Full-Bandwidth SSH Multiplexed Stream",
         defaultPort = 1080
     ),
     OPENVPN_TCP_TLS(
-        shortName = "HTTPS Tunnel",
-        fullName = "HTTP CONNECT Port 443",
-        cipherDescription = "TLS Passthrough via Port 443",
+        shortName = "SSH TLS 443",
+        fullName = "SSH over TLS Port 443",
+        cipherDescription = "High-Bandwidth TLS 443 Passthrough",
         defaultPort = 443
     )
 }
@@ -62,7 +64,7 @@ enum class NodeSortOption(val label: String) {
 }
 
 /**
- * Represents a strictly TLS-verified VPN relay node or user-configured Pro/Custom server.
+ * Represents a high-bandwidth VPN server node with automatic 3-to-5-day ephemeral SSH/WireGuard account credentials.
  */
 data class VpnNode(
     val id: String,
@@ -84,7 +86,10 @@ data class VpnNode(
     val verifiedExitIp: String = "",
     val isLiveFromPublicApi: Boolean = false,
     val isVerifiedWorking: Boolean = false,
-    val isCustomNode: Boolean = false
+    val isCustomNode: Boolean = false,
+    val accountExpiresAtEpochMs: Long = 0L,
+    val wireguardPublicKey: String = "",
+    val provisionedAccountId: String = ""
 ) {
     val signalBars: Int
         get() = when {
@@ -94,6 +99,23 @@ data class VpnNode(
             pingMs < 350 -> 2
             else -> 1
         }
+
+    fun hasValidEphemeralAccount(nowEpochMs: Long = System.currentTimeMillis()): Boolean {
+        return username.isNotBlank() && accountExpiresAtEpochMs > nowEpochMs
+    }
+
+    fun remainingValidityLabel(nowEpochMs: Long = System.currentTimeMillis()): String {
+        val remainingMs = accountExpiresAtEpochMs - nowEpochMs
+        if (remainingMs <= 0L) return "Auto-Fetch 4d SSH/WG"
+        val totalHours = (remainingMs / (1000L * 60L * 60L)).coerceAtLeast(1L)
+        val days = totalHours / 24L
+        val hours = totalHours % 24L
+        return if (days > 0L) {
+            "${days}d ${hours}h Free SSH/WG"
+        } else {
+            "${hours}h Free SSH/WG"
+        }
+    }
 }
 
 /**

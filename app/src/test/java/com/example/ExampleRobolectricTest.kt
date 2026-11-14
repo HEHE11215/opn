@@ -692,6 +692,62 @@ class ExampleRobolectricTest {
         assertEquals("203.0.113.10", currentSelected.ipAddress)
         assertEquals("Germany", currentSelected.countryName)
     }
+
+    @Test
+    fun `ephemeral account provisioner auto creates and renews 4 day SSH and WireGuard accounts`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val baseNode = VpnNode(
+            id = "country-NL",
+            hostName = "198.51.100.44",
+            ipAddress = "198.51.100.44",
+            port = 443,
+            countryName = "Netherlands",
+            countryCode = "NL",
+            cityName = "Amsterdam",
+            flagEmoji = "🇳🇱",
+            region = VpnRegion.EUROPE,
+            pingMs = 31,
+            downloadSpeedMbps = 100.0,
+            operatorName = "NL Server",
+            relayType = RelayTunnelType.SSH_TUNNEL
+        )
+
+        val provisioned = com.example.vpn.EphemeralAccountProvisioner.ensureFreshAccountForConnection(
+            context = context,
+            node = baseNode,
+            forceRenew = true
+        )
+        assertTrue(provisioned.hasValidEphemeralAccount())
+        assertTrue(provisioned.username.startsWith("ssh-nl-"))
+        assertTrue(provisioned.password.isNotBlank())
+        assertTrue(provisioned.wireguardPublicKey.isNotBlank())
+        assertTrue(provisioned.remainingValidityLabel().contains("Free SSH/WG"))
+
+        val rotated = com.example.vpn.EphemeralAccountProvisioner.ensureFreshAccountForConnection(
+            context = context,
+            node = provisioned,
+            forceRenew = true
+        )
+        assertTrue(rotated.hasValidEphemeralAccount())
+        assertTrue(rotated.username != provisioned.username)
+
+        var renewClicked = 0
+        composeRule.setContent {
+            AetherNodeTheme(darkTheme = false) {
+                com.example.ui.EphemeralSshAccountCard(
+                    node = rotated,
+                    onRenewAccount = { renewClicked++ }
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("ephemeral_ssh_account_card").assertIsDisplayed()
+        composeRule.onNodeWithText("Free SSH / WG Account").assertIsDisplayed()
+        composeRule.onNodeWithTag("renew_ssh_account_button").performClick()
+        composeRule.waitForIdle()
+        assertEquals(1, renewClicked)
+    }
 }
+
 
 
