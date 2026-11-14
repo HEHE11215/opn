@@ -1,11 +1,5 @@
 package com.example.ui
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -69,23 +63,19 @@ import com.example.ui.theme.AmberHandshaking
 import com.example.ui.theme.EmeraldConnected
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.RoseAlert
-import com.example.ui.theme.SkyBluePrimary
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private val StatusFireOrange = Color(0xFFFF5E1A)
-
 /**
- * Ultra-Light Persistent Visual Indicator Component reflecting the live [android.net.VpnService] state
+ * Clean Material 3 Visual Indicator Component reflecting the live [android.net.VpnService] state
  * (`CONNECTING`, `CONNECTED`, `DISCONNECTED`, `DISCONNECTING`, `ERROR`) alongside
- * handshake pipeline readiness badges (`FGS`, `TLS`, `TUN0`) with zero idle frame ticks
- * and strict single-line non-wrapping badges.
+ * handshake pipeline readiness badges (`FGS`, `TLS`, `TUN0`).
  */
 @Composable
 fun VpnServiceStateIndicatorBar(
     telemetry: TunnelTelemetry,
-    isDark: Boolean,
+    isDark: Boolean = false,
     onClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -93,9 +83,9 @@ fun VpnServiceStateIndicatorBar(
     val accentColor = when (status) {
         TunnelConnectionStatus.CONNECTED -> EmeraldConnected
         TunnelConnectionStatus.CONNECTING -> AmberHandshaking
-        TunnelConnectionStatus.DISCONNECTING -> StatusFireOrange
-        TunnelConnectionStatus.ERROR -> RoseAlert
-        TunnelConnectionStatus.DISCONNECTED -> if (isDark) SkyBluePrimary else Color(0xFF64748B)
+        TunnelConnectionStatus.DISCONNECTING -> AmberHandshaking
+        TunnelConnectionStatus.ERROR -> MaterialTheme.colorScheme.error
+        TunnelConnectionStatus.DISCONNECTED -> MaterialTheme.colorScheme.primary
     }
 
     val stateLabel = when (status) {
@@ -135,10 +125,13 @@ fun VpnServiceStateIndicatorBar(
         it.severity == VpnDiagnosticSeverity.ERROR || it.severity == VpnDiagnosticSeverity.WARNING
     }
 
-    IosGlassCard(
-        isDark = isDark,
-        cornerRadius = 18.dp,
-        accentGlowColor = if (status != TunnelConnectionStatus.DISCONNECTED) accentColor else null,
+    M3SectionCard(
+        cornerRadius = 14.dp,
+        borderColor = if (status != TunnelConnectionStatus.DISCONNECTED) {
+            accentColor.copy(alpha = 0.45f)
+        } else {
+            MaterialTheme.colorScheme.outlineVariant
+        },
         modifier = modifier
             .fillMaxWidth()
             .widthIn(max = 600.dp)
@@ -154,7 +147,7 @@ fun VpnServiceStateIndicatorBar(
                 .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            // Row 1: State Beacon + "TUNNEL" + Status Pill + Right-aligned [FGS][TLS][TUN0]
+            // Row 1: State Beacon + Status Pill + Right-aligned [FGS][TLS][TUN0]
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -162,8 +155,7 @@ fun VpnServiceStateIndicatorBar(
             ) {
                 Surface(
                     shape = CircleShape,
-                    color = accentColor.copy(alpha = 0.16f),
-                    border = BorderStroke(1.2.dp, accentColor.copy(alpha = 0.65f)),
+                    color = accentColor.copy(alpha = 0.14f),
                     modifier = Modifier.size(28.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
@@ -205,9 +197,8 @@ fun VpnServiceStateIndicatorBar(
                 }
 
                 Surface(
-                    shape = RoundedCornerShape(7.dp),
-                    color = accentColor.copy(alpha = 0.16f),
-                    border = BorderStroke(0.9.dp, accentColor.copy(alpha = 0.45f))
+                    shape = RoundedCornerShape(6.dp),
+                    color = accentColor.copy(alpha = 0.14f)
                 ) {
                     Text(
                         text = stateLabel,
@@ -254,7 +245,7 @@ fun VpnServiceStateIndicatorBar(
                 }
             }
 
-            // Row 2: Subtitle + Non-wrapping Alert Pill (never squeezed into single letters!)
+            // Row 2: Subtitle + Non-wrapping Alert Pill
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -271,9 +262,8 @@ fun VpnServiceStateIndicatorBar(
 
                 if (errorCount > 0) {
                     Surface(
-                        shape = RoundedCornerShape(50),
-                        color = RoseAlert.copy(alpha = 0.16f),
-                        border = BorderStroke(0.8.dp, RoseAlert.copy(alpha = 0.35f))
+                        shape = RoundedCornerShape(6.dp),
+                        color = MaterialTheme.colorScheme.errorContainer
                     ) {
                         Text(
                             text = "$errorCount alert${if (errorCount == 1) "" else "s"}",
@@ -281,7 +271,7 @@ fun VpnServiceStateIndicatorBar(
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 10.sp
                             ),
-                            color = RoseAlert,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
                             maxLines = 1,
                             softWrap = false,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
@@ -301,15 +291,18 @@ private fun PipelineStepChip(
     isError: Boolean
 ) {
     val chipColor = when {
-        isError -> RoseAlert
+        isError -> MaterialTheme.colorScheme.error
         isActive -> EmeraldConnected
         isPending -> AmberHandshaking
-        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
     Surface(
-        shape = RoundedCornerShape(7.dp),
-        color = chipColor.copy(alpha = if (isActive || isPending || isError) 0.16f else 0.08f),
-        border = BorderStroke(0.9.dp, chipColor.copy(alpha = 0.42f))
+        shape = RoundedCornerShape(6.dp),
+        color = if (isActive || isPending || isError) {
+            chipColor.copy(alpha = 0.14f)
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant
+        }
     ) {
         Text(
             text = label,
@@ -327,14 +320,13 @@ private fun PipelineStepChip(
 }
 
 /**
- * Diagnostic Display capturing specific connection errors, TCP timeouts, SOCKS5/HTTP handshake
- * rejections, TLS verification errors, TUN0 setup errors, and failover traces from [AetherVpnService].
- * Designed with non-wrapping badges and clean, well-padded buttons.
+ * Clean Material 3 Diagnostic Display capturing specific connection errors, TCP timeouts,
+ * SOCKS5/HTTP handshake rejections, TLS verification errors, TUN0 setup errors, and failover traces.
  */
 @Composable
 fun VpnDiagnosticPanel(
     telemetry: TunnelTelemetry,
-    isDark: Boolean,
+    isDark: Boolean = false,
     onClearDiagnostics: () -> Unit,
     onRetryFastSwitch: () -> Unit,
     onBrowseServers: () -> Unit,
@@ -355,17 +347,16 @@ fun VpnDiagnosticPanel(
         it.severity == VpnDiagnosticSeverity.ERROR || it.severity == VpnDiagnosticSeverity.WARNING
     }
 
-    val panelGlow = when {
+    val panelAccent = when {
         telemetry.status == TunnelConnectionStatus.ERROR -> RoseAlert
         errorLogsCount > 0 -> AmberHandshaking
         telemetry.status == TunnelConnectionStatus.CONNECTED -> EmeraldConnected
-        else -> SkyBluePrimary
+        else -> MaterialTheme.colorScheme.primary
     }
 
-    IosGlassCard(
-        isDark = isDark,
-        cornerRadius = 22.dp,
-        accentGlowColor = panelGlow,
+    M3SectionCard(
+        cornerRadius = 16.dp,
+        borderColor = panelAccent.copy(alpha = 0.45f),
         modifier = modifier
             .fillMaxWidth()
             .widthIn(max = 600.dp)
@@ -376,7 +367,6 @@ fun VpnDiagnosticPanel(
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 14.dp)
         ) {
-            // Header row with clean non-wrapping badge pill and 48dp touch controls
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -388,15 +378,14 @@ fun VpnDiagnosticPanel(
             ) {
                 Surface(
                     shape = CircleShape,
-                    color = panelGlow.copy(alpha = 0.16f),
-                    border = BorderStroke(1.dp, panelGlow.copy(alpha = 0.42f)),
+                    color = panelAccent.copy(alpha = 0.14f),
                     modifier = Modifier.size(34.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             imageVector = if (hasFailure) Icons.Default.WarningAmber else Icons.Default.BugReport,
                             contentDescription = "Tunnel diagnostics icon",
-                            tint = panelGlow,
+                            tint = panelAccent,
                             modifier = Modifier.size(18.dp)
                         )
                     }
@@ -418,8 +407,8 @@ fun VpnDiagnosticPanel(
                             modifier = Modifier.weight(1f, fill = false)
                         )
                         Surface(
-                            shape = RoundedCornerShape(50),
-                            color = panelGlow.copy(alpha = 0.16f)
+                            shape = RoundedCornerShape(6.dp),
+                            color = panelAccent.copy(alpha = 0.14f)
                         ) {
                             Text(
                                 text = if (errorLogsCount > 0) {
@@ -431,7 +420,7 @@ fun VpnDiagnosticPanel(
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 10.sp
                                 ),
-                                color = panelGlow,
+                                color = panelAccent,
                                 maxLines = 1,
                                 softWrap = false,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
@@ -478,16 +467,15 @@ fun VpnDiagnosticPanel(
                 }
             }
 
-            // Prominent failure reason card when VpnService encounters an error or recent relay failure
             val failureReason = telemetry.errorMessage ?: telemetry.lastFailureReason
             if (!failureReason.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(10.dp))
                 val isHardError = telemetry.status == TunnelConnectionStatus.ERROR
                 val calloutColor = if (isHardError) RoseAlert else AmberHandshaking
                 Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = calloutColor.copy(alpha = if (isDark) 0.14f else 0.10f),
-                    border = BorderStroke(1.dp, calloutColor.copy(alpha = 0.42f)),
+                    shape = RoundedCornerShape(12.dp),
+                    color = calloutColor.copy(alpha = 0.10f),
+                    border = BorderStroke(1.dp, calloutColor.copy(alpha = 0.40f)),
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("vpn_diagnostic_failure_callout")
@@ -542,7 +530,7 @@ fun VpnDiagnosticPanel(
                         ) {
                             OutlinedButton(
                                 onClick = onRetryFastSwitch,
-                                shape = RoundedCornerShape(12.dp),
+                                shape = RoundedCornerShape(10.dp),
                                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
                                 colors = ButtonDefaults.outlinedButtonColors(
                                     contentColor = calloutColor
@@ -570,12 +558,12 @@ fun VpnDiagnosticPanel(
                             }
                             OutlinedButton(
                                 onClick = onBrowseServers,
-                                shape = RoundedCornerShape(12.dp),
+                                shape = RoundedCornerShape(10.dp),
                                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
                                 colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = SkyBluePrimary
+                                    contentColor = MaterialTheme.colorScheme.primary
                                 ),
-                                border = BorderStroke(1.dp, SkyBluePrimary.copy(alpha = 0.55f)),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)),
                                 modifier = Modifier
                                     .weight(1f)
                                     .minimumInteractiveComponentSize()
@@ -595,12 +583,12 @@ fun VpnDiagnosticPanel(
                         Spacer(modifier = Modifier.height(8.dp))
                         OutlinedButton(
                             onClick = onOpenFullLogs,
-                            shape = RoundedCornerShape(12.dp),
+                            shape = RoundedCornerShape(10.dp),
                             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 9.dp),
                             colors = ButtonDefaults.outlinedButtonColors(
                                 contentColor = MaterialTheme.colorScheme.onSurface
                             ),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .minimumInteractiveComponentSize()
@@ -619,12 +607,8 @@ fun VpnDiagnosticPanel(
                 }
             }
 
-            // Expandable Chronological Diagnostic Timeline
-            AnimatedVisibility(
-                visible = showExpandedList,
-                enter = fadeIn(tween(150)) + expandVertically(tween(180)),
-                exit = fadeOut(tween(140)) + shrinkVertically(tween(160))
-            ) {
+            // Direct conditional rendering without expand/shrink animations
+            if (showExpandedList) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -632,7 +616,7 @@ fun VpnDiagnosticPanel(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
+                        color = MaterialTheme.colorScheme.outlineVariant
                     )
                     if (logs.isEmpty()) {
                         Row(
@@ -643,7 +627,7 @@ fun VpnDiagnosticPanel(
                             Icon(
                                 imageVector = Icons.Default.Info,
                                 contentDescription = null,
-                                tint = SkyBluePrimary,
+                                tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(16.dp)
                             )
                             Text(
@@ -654,7 +638,7 @@ fun VpnDiagnosticPanel(
                         }
                     } else {
                         logs.take(6).forEach { entry ->
-                            DiagnosticLogRow(entry = entry, isDark = isDark)
+                            DiagnosticLogRow(entry = entry)
                         }
                     }
                 }
@@ -665,14 +649,13 @@ fun VpnDiagnosticPanel(
 
 @Composable
 private fun DiagnosticLogRow(
-    entry: VpnDiagnosticEntry,
-    isDark: Boolean
+    entry: VpnDiagnosticEntry
 ) {
     val severityColor = when (entry.severity) {
         VpnDiagnosticSeverity.SUCCESS -> EmeraldConnected
         VpnDiagnosticSeverity.WARNING -> AmberHandshaking
         VpnDiagnosticSeverity.ERROR -> RoseAlert
-        VpnDiagnosticSeverity.INFO -> SkyBluePrimary
+        VpnDiagnosticSeverity.INFO -> MaterialTheme.colorScheme.primary
     }
     val severityIcon = when (entry.severity) {
         VpnDiagnosticSeverity.SUCCESS -> Icons.Default.CheckCircle
@@ -686,13 +669,9 @@ private fun DiagnosticLogRow(
     }
 
     Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = if (isDark) {
-            Color(0xFF0E1A2E).copy(alpha = 0.62f)
-        } else {
-            Color.White.copy(alpha = 0.65f)
-        },
-        border = BorderStroke(0.8.dp, severityColor.copy(alpha = 0.32f)),
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = Modifier
             .fillMaxWidth()
             .testTag("vpn_diagnostic_log_row")

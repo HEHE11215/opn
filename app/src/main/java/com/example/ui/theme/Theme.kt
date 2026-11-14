@@ -1,14 +1,9 @@
 package com.example.ui.theme
 
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
-import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
 
 private val LightColorScheme = lightColorScheme(
@@ -21,7 +16,9 @@ private val LightColorScheme = lightColorScheme(
     secondaryContainer = EmeraldConnectedContainer,
     onSecondaryContainer = OnEmeraldConnectedContainer,
     tertiary = AmberHandshaking,
+    onTertiary = Color.White,
     tertiaryContainer = AmberHandshakingContainer,
+    onTertiaryContainer = Color(0xFF78350F),
     background = AlabasterBg,
     onBackground = InkTextPrimary,
     surface = PureWhiteSurface,
@@ -29,8 +26,11 @@ private val LightColorScheme = lightColorScheme(
     surfaceVariant = SoftSlateSurfaceVariant,
     onSurfaceVariant = SlateTextSecondary,
     outline = CrispBorderSlate,
+    outlineVariant = Color(0xFFE2E8F0),
     error = RoseAlert,
-    errorContainer = RoseAlertContainer
+    onError = Color.White,
+    errorContainer = RoseAlertContainer,
+    onErrorContainer = Color(0xFF881337)
 )
 
 private val DarkColorScheme = darkColorScheme(
@@ -43,6 +43,9 @@ private val DarkColorScheme = darkColorScheme(
     secondaryContainer = Color(0xFF064E3B),
     onSecondaryContainer = Color(0xFFD1FAE5),
     tertiary = Color(0xFFFBBF24),
+    onTertiary = ObsidianBg,
+    tertiaryContainer = Color(0xFF78350F),
+    onTertiaryContainer = Color(0xFFFEF3C7),
     background = ObsidianBg,
     onBackground = Color(0xFFF8FAFC),
     surface = ObsidianSurface,
@@ -50,51 +53,26 @@ private val DarkColorScheme = darkColorScheme(
     surfaceVariant = ObsidianSurfaceVariant,
     onSurfaceVariant = Color(0xFF94A3B8),
     outline = ObsidianBorder,
-    error = Color(0xFFFB7185)
+    outlineVariant = Color(0xFF1E293B),
+    error = Color(0xFFFB7185),
+    onError = ObsidianBg,
+    errorContainer = Color(0xFF4C0519),
+    onErrorContainer = Color(0xFFFFE4E6)
 )
 
-@Composable
-private fun animateThemeColor(target: Color, label: String): Color {
-    val animated by animateColorAsState(
-        targetValue = target,
-        animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing),
-        label = label
-    )
-    return animated
-}
-
 /**
- * A VPN Liquid Glass Theme with silky-smooth animated Dark/Light mode transitions.
+ * Clean Material 3 Theme for **A VPN** with seamless, instantaneous Day and Night switching
+ * (zero per-property color tween animations).
  */
 @Composable
 fun AetherNodeTheme(
     darkTheme: Boolean = false,
     content: @Composable () -> Unit
 ) {
-    val target = if (darkTheme) DarkColorScheme else LightColorScheme
-
-    val animatedScheme: ColorScheme = target.copy(
-        primary = animateThemeColor(target.primary, "primary"),
-        onPrimary = animateThemeColor(target.onPrimary, "onPrimary"),
-        primaryContainer = animateThemeColor(target.primaryContainer, "primaryContainer"),
-        onPrimaryContainer = animateThemeColor(target.onPrimaryContainer, "onPrimaryContainer"),
-        secondary = animateThemeColor(target.secondary, "secondary"),
-        onSecondary = animateThemeColor(target.onSecondary, "onSecondary"),
-        secondaryContainer = animateThemeColor(target.secondaryContainer, "secondaryContainer"),
-        onSecondaryContainer = animateThemeColor(target.onSecondaryContainer, "onSecondaryContainer"),
-        tertiary = animateThemeColor(target.tertiary, "tertiary"),
-        background = animateThemeColor(target.background, "background"),
-        onBackground = animateThemeColor(target.onBackground, "onBackground"),
-        surface = animateThemeColor(target.surface, "surface"),
-        onSurface = animateThemeColor(target.onSurface, "onSurface"),
-        surfaceVariant = animateThemeColor(target.surfaceVariant, "surfaceVariant"),
-        onSurfaceVariant = animateThemeColor(target.onSurfaceVariant, "onSurfaceVariant"),
-        outline = animateThemeColor(target.outline, "outline"),
-        error = animateThemeColor(target.error, "error")
-    )
+    val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
 
     MaterialTheme(
-        colorScheme = animatedScheme,
+        colorScheme = colorScheme,
         typography = Typography,
         content = content
     )

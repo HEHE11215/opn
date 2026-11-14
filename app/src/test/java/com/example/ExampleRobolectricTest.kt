@@ -605,4 +605,30 @@ class ExampleRobolectricTest {
         composeRule.waitForIdle()
         assertEquals(1, tileClicks)
     }
+
+    @Test
+    fun `material day and night toggle switches theme seamlessly without glass or animations`() {
+        val isDarkState = androidx.compose.runtime.mutableStateOf(false)
+
+        composeRule.setContent {
+            AetherNodeTheme(darkTheme = isDarkState.value) {
+                MaterialDayNightToggle(
+                    isDark = isDarkState.value,
+                    onToggle = { isDarkState.value = !isDarkState.value }
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("Day").assertIsDisplayed()
+        composeRule.onNodeWithTag("theme_toggle_button").performClick()
+        composeRule.waitForIdle()
+        assertTrue(isDarkState.value)
+        composeRule.onNodeWithText("Night").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("theme_toggle_button").performClick()
+        composeRule.waitForIdle()
+        assertFalse(isDarkState.value)
+        composeRule.onNodeWithText("Day").assertIsDisplayed()
+    }
 }
+

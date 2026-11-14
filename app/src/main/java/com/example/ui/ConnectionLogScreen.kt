@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -37,7 +36,6 @@ import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -67,7 +65,6 @@ import com.example.ui.theme.AmberHandshaking
 import com.example.ui.theme.EmeraldConnected
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.RoseAlert
-import com.example.ui.theme.SkyBluePrimary
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -80,14 +77,13 @@ private enum class LogFilterMode(val label: String) {
 }
 
 /**
- * Dedicated **Connection Log** screen displaying verbose error messages, tunnel handshake phases,
+ * Clean Material 3 **Connection Log** screen displaying verbose error messages, tunnel handshake phases,
  * TCP/TLS/Exit-IP telemetry, and troubleshooting actions pulled directly from [com.example.vpn.AetherVpnService].
- * Engineered with zero idle animations for ultra-light memory and CPU consumption.
  */
 @Composable
 fun ConnectionLogScreen(
     telemetry: TunnelTelemetry,
-    isDark: Boolean,
+    isDark: Boolean = false,
     onClearLogs: () -> Unit,
     onRetryFastSwitch: () -> Unit,
     onBrowseServers: () -> Unit,
@@ -130,7 +126,6 @@ fun ConnectionLogScreen(
         item(key = "connection_log_handshake_header") {
             LiveHandshakeStatusHeaderCard(
                 telemetry = telemetry,
-                isDark = isDark,
                 errorCount = errorCount,
                 warnCount = warnCount,
                 onCopyAll = {
@@ -143,14 +138,13 @@ fun ConnectionLogScreen(
             )
         }
 
-        // 2. Verbose Error Troubleshooting Card (whenever a connection error or recent failure reason exists)
+        // 2. Verbose Error Troubleshooting Card
         val verboseError = telemetry.errorMessage ?: telemetry.lastFailureReason
         if (!verboseError.isNullOrBlank()) {
             item(key = "connection_log_error_troubleshoot") {
                 VerboseErrorTroubleshootingCard(
                     telemetry = telemetry,
                     verboseError = verboseError,
-                    isDark = isDark,
                     onRetryFastSwitch = onRetryFastSwitch,
                     onBrowseServers = onBrowseServers
                 )
@@ -188,10 +182,6 @@ fun ConnectionLogScreen(
                                 softWrap = false
                             )
                         },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = SkyBluePrimary.copy(alpha = 0.18f),
-                            selectedLabelColor = SkyBluePrimary
-                        ),
                         modifier = Modifier.testTag("log_filter_${mode.name.lowercase(Locale.US)}")
                     )
                 }
@@ -201,9 +191,8 @@ fun ConnectionLogScreen(
         // 4. Verbose Log Stream or Empty State
         if (filteredLogs.isEmpty()) {
             item(key = "connection_log_empty_state") {
-                IosGlassCard(
-                    isDark = isDark,
-                    cornerRadius = 20.dp,
+                M3SectionCard(
+                    cornerRadius = 16.dp,
                     modifier = Modifier
                         .fillMaxWidth()
                         .widthIn(max = 600.dp)
@@ -219,7 +208,7 @@ fun ConnectionLogScreen(
                         Icon(
                             imageVector = Icons.Default.Terminal,
                             contentDescription = null,
-                            tint = SkyBluePrimary,
+                            tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(34.dp)
                         )
                         Text(
@@ -244,7 +233,6 @@ fun ConnectionLogScreen(
             ) { entry ->
                 VerboseConnectionLogCard(
                     entry = entry,
-                    isDark = isDark,
                     modifier = Modifier
                         .fillMaxWidth()
                         .widthIn(max = 600.dp)
@@ -257,7 +245,6 @@ fun ConnectionLogScreen(
 @Composable
 private fun LiveHandshakeStatusHeaderCard(
     telemetry: TunnelTelemetry,
-    isDark: Boolean,
     errorCount: Int,
     warnCount: Int,
     onCopyAll: () -> Unit,
@@ -267,13 +254,12 @@ private fun LiveHandshakeStatusHeaderCard(
         TunnelConnectionStatus.CONNECTED -> EmeraldConnected
         TunnelConnectionStatus.CONNECTING -> AmberHandshaking
         TunnelConnectionStatus.ERROR -> RoseAlert
-        else -> SkyBluePrimary
+        else -> MaterialTheme.colorScheme.primary
     }
 
-    IosGlassCard(
-        isDark = isDark,
-        cornerRadius = 22.dp,
-        accentGlowColor = accent,
+    M3SectionCard(
+        cornerRadius = 16.dp,
+        borderColor = accent.copy(alpha = 0.45f),
         modifier = Modifier
             .fillMaxWidth()
             .widthIn(max = 600.dp)
@@ -297,8 +283,7 @@ private fun LiveHandshakeStatusHeaderCard(
                 ) {
                     Surface(
                         shape = CircleShape,
-                        color = accent.copy(alpha = 0.16f),
-                        border = BorderStroke(1.dp, accent.copy(alpha = 0.45f)),
+                        color = accent.copy(alpha = 0.14f),
                         modifier = Modifier.size(36.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
@@ -331,7 +316,6 @@ private fun LiveHandshakeStatusHeaderCard(
                 }
             }
 
-            // Compact Technical Telemetry Grid
             val targetNode = telemetry.activeNode
             val targetText = if (targetNode != null && targetNode.ipAddress.isNotBlank()) {
                 "${targetNode.flagEmoji} ${targetNode.countryName} (${targetNode.ipAddress}:${targetNode.port})"
@@ -364,17 +348,14 @@ private fun LiveHandshakeStatusHeaderCard(
                 }
             }
 
-            // Cleanly padded Action Buttons Row (Copy & Clear)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 OutlinedButton(
                     onClick = onCopyAll,
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(10.dp),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = SkyBluePrimary),
-                    border = BorderStroke(1.dp, SkyBluePrimary.copy(alpha = 0.5f)),
                     modifier = Modifier
                         .weight(1f)
                         .minimumInteractiveComponentSize()
@@ -399,7 +380,7 @@ private fun LiveHandshakeStatusHeaderCard(
                 OutlinedButton(
                     onClick = onClearLogs,
                     enabled = telemetry.diagnosticLogs.isNotEmpty() || !telemetry.lastFailureReason.isNullOrBlank(),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(10.dp),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
                     colors = ButtonDefaults.outlinedButtonColors(
                         contentColor = if (errorCount + warnCount > 0) RoseAlert else MaterialTheme.colorScheme.onSurface
@@ -466,7 +447,6 @@ private fun TelemetrySpecRow(
 private fun VerboseErrorTroubleshootingCard(
     telemetry: TunnelTelemetry,
     verboseError: String,
-    isDark: Boolean,
     onRetryFastSwitch: () -> Unit,
     onBrowseServers: () -> Unit
 ) {
@@ -475,10 +455,9 @@ private fun VerboseErrorTroubleshootingCard(
     val stage = telemetry.lastFailureStage ?: "Handshake Failure"
     val hint = remember(stage) { troubleshootHintForStage(stage) }
 
-    Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = toneColor.copy(alpha = if (isDark) 0.14f else 0.10f),
-        border = BorderStroke(1.2.dp, toneColor.copy(alpha = 0.45f)),
+    M3SectionCard(
+        cornerRadius = 16.dp,
+        borderColor = toneColor.copy(alpha = 0.50f),
         modifier = Modifier
             .fillMaxWidth()
             .widthIn(max = 600.dp)
@@ -531,7 +510,7 @@ private fun VerboseErrorTroubleshootingCard(
 
             Surface(
                 shape = RoundedCornerShape(10.dp),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = if (isDark) 0.45f else 0.72f)
+                color = MaterialTheme.colorScheme.surfaceVariant
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
@@ -541,7 +520,7 @@ private fun VerboseErrorTroubleshootingCard(
                     Icon(
                         imageVector = Icons.Default.Info,
                         contentDescription = null,
-                        tint = SkyBluePrimary,
+                        tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier
                             .padding(top = 1.dp)
                             .size(15.dp)
@@ -560,7 +539,7 @@ private fun VerboseErrorTroubleshootingCard(
             ) {
                 Button(
                     onClick = onRetryFastSwitch,
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(10.dp),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = toneColor),
                     modifier = Modifier
@@ -588,10 +567,8 @@ private fun VerboseErrorTroubleshootingCard(
 
                 OutlinedButton(
                     onClick = onBrowseServers,
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(10.dp),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = SkyBluePrimary),
-                    border = BorderStroke(1.dp, SkyBluePrimary.copy(alpha = 0.55f)),
                     modifier = Modifier
                         .weight(1f)
                         .minimumInteractiveComponentSize()
@@ -620,14 +597,13 @@ private fun VerboseErrorTroubleshootingCard(
 @Composable
 private fun VerboseConnectionLogCard(
     entry: VpnDiagnosticEntry,
-    isDark: Boolean,
     modifier: Modifier = Modifier
 ) {
     val severityColor = when (entry.severity) {
         VpnDiagnosticSeverity.SUCCESS -> EmeraldConnected
         VpnDiagnosticSeverity.WARNING -> AmberHandshaking
         VpnDiagnosticSeverity.ERROR -> RoseAlert
-        VpnDiagnosticSeverity.INFO -> SkyBluePrimary
+        VpnDiagnosticSeverity.INFO -> MaterialTheme.colorScheme.primary
     }
     val severityLabel = when (entry.severity) {
         VpnDiagnosticSeverity.SUCCESS -> "OK"
@@ -646,10 +622,13 @@ private fun VerboseConnectionLogCard(
         SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date(entry.timestampEpochMs))
     }
 
-    IosGlassCard(
-        isDark = isDark,
-        cornerRadius = 18.dp,
-        accentGlowColor = if (entry.severity == VpnDiagnosticSeverity.ERROR) RoseAlert else null,
+    M3SectionCard(
+        cornerRadius = 14.dp,
+        borderColor = if (entry.severity == VpnDiagnosticSeverity.ERROR) {
+            RoseAlert.copy(alpha = 0.45f)
+        } else {
+            MaterialTheme.colorScheme.outlineVariant
+        },
         modifier = modifier.testTag("connection_log_entry_card")
     ) {
         Column(
@@ -665,8 +644,7 @@ private fun VerboseConnectionLogCard(
             ) {
                 Surface(
                     shape = RoundedCornerShape(6.dp),
-                    color = severityColor.copy(alpha = 0.16f),
-                    border = BorderStroke(0.8.dp, severityColor.copy(alpha = 0.45f))
+                    color = severityColor.copy(alpha = 0.14f)
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
@@ -723,7 +701,7 @@ private fun VerboseConnectionLogCard(
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 11.sp
                 ),
-                color = SkyBluePrimary
+                color = MaterialTheme.colorScheme.primary
             )
 
             Text(
@@ -758,7 +736,7 @@ private fun troubleshootHintForStage(stage: String): String {
         s.contains("leak") ->
             "Why this happens: The proxy exposed your real device IP (transparent proxy), so A VPN rejected it for zero-leak safety."
         s.contains("tun") ->
-            "Why this happens: Android OS declined or revoked VPN interface establishment. Tap the orb to grant VPN permission again."
+            "Why this happens: Android OS declined or revoked VPN interface establishment. Tap the button to grant VPN permission again."
         else -> "Why this happens: The selected relay could not complete full end-to-end TLS verification. Tap Try Fastest to connect to a live working server."
     }
 }

@@ -29,7 +29,7 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.LocalFireDepartment
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -38,13 +38,14 @@ import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -63,16 +64,11 @@ import com.example.model.VpnRegion
 import com.example.ui.theme.AmberHandshaking
 import com.example.ui.theme.EmeraldConnected
 import com.example.ui.theme.JetBrainsMonoFontFamily
-import com.example.ui.theme.SkyBluePrimary
 import java.util.Locale
 
-private val FireAccent = Color(0xFFFF5E1A)
-
 /**
- * Lightweight iPhone Glassmorphic Servers Screen:
- * - Compact 1-tap **Ping ↑ / Ping ↓** sort button + sort bar (`Ping: Asc ↑`, `Ping: Desc ↓`, `Speed ⚡`, `Country A–Z`).
- * - Short, crisp button labels with clean margins & internal padding.
- * - Strictly ONE card per country backed by Ultra-Light Wi-Fi Warp speed.
+ * Clean Material 3 Servers Screen (`NodeListScreen`) with standard Material 3 cards, chips,
+ * and icon buttons. Zero glass overlays or idle animations.
  */
 @Composable
 fun NodeListScreen(
@@ -105,7 +101,7 @@ fun NodeListScreen(
         ) {
             Spacer(modifier = Modifier.height(6.dp))
 
-            // 1. iPhone Glass Search Bar + Compact Ping ↑/↓ + Sync + Add Buttons
+            // 1. Material 3 Search Bar + Ping ↑/↓ + Sync + Add Buttons
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -147,101 +143,71 @@ fun NodeListScreen(
                         }
                     } else null,
                     singleLine = true,
-                    shape = RoundedCornerShape(16.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.60f),
-                        focusedBorderColor = SkyBluePrimary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
-                    )
+                    shape = RoundedCornerShape(12.dp)
                 )
 
                 // Compact 1-Tap Ping Asc ↑ / Desc ↓ Toggle Button
-                IosGlassCard(
-                    isDark = isDark,
-                    cornerRadius = 15.dp,
-                    accentGlowColor = if (isPingAsc) EmeraldConnected else FireAccent,
+                OutlinedButton(
+                    onClick = onTogglePingSort,
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                     modifier = Modifier
                         .height(48.dp)
-                        .clickable(onClick = onTogglePingSort)
                         .testTag("ping_asc_desc_toggle_button")
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .padding(horizontal = 14.dp)
-                            .height(48.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        Icon(
-                            imageVector = if (isPingAsc) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
-                            contentDescription = "Toggle Ping Sort Asc or Desc",
-                            tint = if (isPingAsc) EmeraldConnected else FireAccent,
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(
-                            text = if (isPingAsc) "Ping ↑" else "Ping ↓",
-                            style = MaterialTheme.typography.labelLarge.copy(
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.5.sp
-                            ),
-                            color = if (isPingAsc) EmeraldConnected else FireAccent,
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    }
+                    Icon(
+                        imageVector = if (isPingAsc) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
+                        contentDescription = "Toggle Ping Sort Asc or Desc",
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = if (isPingAsc) "Ping ↑" else "Ping ↓",
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.5.sp
+                        ),
+                        maxLines = 1,
+                        softWrap = false
+                    )
                 }
 
                 // Auto-Refresh Live Tunnels Button
-                IosGlassCard(
-                    isDark = isDark,
-                    cornerRadius = 15.dp,
-                    modifier = Modifier.size(48.dp)
+                FilledTonalIconButton(
+                    onClick = onSyncPublicApi,
+                    enabled = !uiState.isSyncingApi,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("refresh_nodes_button")
                 ) {
-                    IconButton(
-                        onClick = onSyncPublicApi,
-                        enabled = !uiState.isSyncingApi,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .testTag("refresh_nodes_button")
-                    ) {
-                        if (uiState.isSyncingApi) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp
-                            )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = "Fetch latest servers",
-                                tint = SkyBluePrimary,
-                                modifier = Modifier.size(19.dp)
-                            )
-                        }
+                    if (uiState.isSyncingApi) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Fetch latest servers",
+                            modifier = Modifier.size(19.dp)
+                        )
                     }
                 }
 
                 // Add Custom Server Button
-                IosGlassCard(
-                    isDark = isDark,
-                    cornerRadius = 15.dp,
-                    accentGlowColor = SkyBluePrimary,
-                    modifier = Modifier.size(48.dp)
+                FilledTonalIconButton(
+                    onClick = onOpenAddCustomModal,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("add_custom_node_button")
                 ) {
-                    IconButton(
-                        onClick = onOpenAddCustomModal,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .testTag("add_custom_node_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "Add custom server",
-                            tint = SkyBluePrimary,
-                            modifier = Modifier.size(19.dp)
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Add custom server",
+                        modifier = Modifier.size(19.dp)
+                    )
                 }
             }
 
@@ -266,10 +232,6 @@ fun NodeListScreen(
                                 maxLines = 1
                             )
                         },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = SkyBluePrimary.copy(alpha = 0.18f),
-                            selectedLabelColor = SkyBluePrimary
-                        ),
                         modifier = Modifier.testTag("region_chip_${region.name.lowercase(Locale.US)}")
                     )
                 }
@@ -277,7 +239,7 @@ fun NodeListScreen(
 
             Spacer(modifier = Modifier.height(6.dp))
 
-            // 3. Explicit Sort Bar: Ping: Asc ↑ | Ping: Desc ↓ | Speed ⚡ | Country A–Z
+            // 3. Sort Bar: Ping: Asc ↑ | Ping: Desc ↓ | Speed ⚡ | Country A–Z
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -294,17 +256,17 @@ fun NodeListScreen(
                 NodeSortOption.entries.forEach { sortOpt ->
                     val active = uiState.sortOption == sortOpt
                     Surface(
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(8.dp),
                         color = if (active) {
-                            SkyBluePrimary.copy(alpha = 0.18f)
+                            MaterialTheme.colorScheme.primaryContainer
                         } else {
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                            MaterialTheme.colorScheme.surfaceVariant
                         },
                         border = if (active) {
-                            BorderStroke(1.1.dp, SkyBluePrimary.copy(alpha = 0.65f))
+                            BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
                         } else null,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
+                            .clip(RoundedCornerShape(8.dp))
                             .clickable { onSelectSortOption(sortOpt) }
                             .testTag("sort_chip_${sortOpt.name.lowercase(Locale.US)}")
                     ) {
@@ -315,7 +277,7 @@ fun NodeListScreen(
                                 fontSize = 11.5.sp
                             ),
                             color = if (active) {
-                                SkyBluePrimary
+                                MaterialTheme.colorScheme.onPrimaryContainer
                             } else {
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             },
@@ -345,28 +307,27 @@ fun NodeListScreen(
                     isSelected = uiState.isAutoFastestMode,
                     isSyncing = uiState.isSyncingApi,
                     fastestNode = fastestOverall,
-                    isDark = isDark,
                     onClick = onSelectAutoFastest
                 )
             }
 
             if (uiState.filteredNodes.isEmpty()) {
                 item {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(28.dp),
-                        contentAlignment = Alignment.Center
+                    M3SectionCard(
+                        cornerRadius = 16.dp,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(28.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             if (uiState.isSyncingApi) {
                                 CircularProgressIndicator(
-                                    modifier = Modifier.size(36.dp),
-                                    strokeWidth = 3.dp,
-                                    color = SkyBluePrimary
+                                    modifier = Modifier.size(34.dp),
+                                    strokeWidth = 3.dp
                                 )
                                 Text(
                                     text = "Testing Live Relays (TCP + TLS Exit IP)…",
@@ -390,26 +351,22 @@ fun NodeListScreen(
                                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                     Button(
                                         onClick = onSyncPublicApi,
-                                        colors = ButtonDefaults.buttonColors(containerColor = SkyBluePrimary),
                                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
-                                        shape = RoundedCornerShape(12.dp)
+                                        shape = RoundedCornerShape(10.dp)
                                     ) {
                                         Text(
                                             text = "Scan Relays",
-                                            color = Color.White,
                                             maxLines = 1,
                                             softWrap = false
                                         )
                                     }
-                                    Button(
+                                    FilledTonalButton(
                                         onClick = onOpenAddCustomModal,
-                                        colors = ButtonDefaults.buttonColors(containerColor = FireAccent),
                                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
-                                        shape = RoundedCornerShape(12.dp)
+                                        shape = RoundedCornerShape(10.dp)
                                     ) {
                                         Text(
                                             text = "+ Custom",
-                                            color = Color.White,
                                             maxLines = 1,
                                             softWrap = false
                                         )
@@ -433,7 +390,6 @@ fun NodeListScreen(
                         node = node,
                         isSelected = isSelected,
                         isFavorite = isFavorite,
-                        isDark = isDark,
                         onSelectNode = { onSelectAndConnectNode(node) },
                         onToggleFavorite = { onToggleFavorite(node.countryCode) }
                     )
@@ -457,13 +413,11 @@ private fun AutoFastestLocationCard(
     isSelected: Boolean,
     isSyncing: Boolean,
     fastestNode: VpnNode,
-    isDark: Boolean,
     onClick: () -> Unit
 ) {
-    IosGlassCard(
-        isDark = isDark,
-        cornerRadius = 20.dp,
-        accentGlowColor = if (isSelected) EmeraldConnected else SkyBluePrimary,
+    M3SectionCard(
+        cornerRadius = 16.dp,
+        borderColor = if (isSelected) EmeraldConnected else MaterialTheme.colorScheme.outlineVariant,
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
@@ -476,22 +430,21 @@ private fun AutoFastestLocationCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = SkyBluePrimary.copy(alpha = 0.16f),
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
                 modifier = Modifier.size(42.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     if (isSyncing) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.dp,
-                            color = SkyBluePrimary
+                            strokeWidth = 2.dp
                         )
                     } else {
                         Icon(
                             imageVector = Icons.Default.Bolt,
                             contentDescription = null,
-                            tint = SkyBluePrimary,
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
                             modifier = Modifier.size(22.dp)
                         )
                     }
@@ -506,6 +459,7 @@ private fun AutoFastestLocationCard(
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.Bold
                     ),
+                    color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -524,10 +478,10 @@ private fun AutoFastestLocationCard(
 
             Button(
                 onClick = onClick,
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(10.dp),
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isSelected) EmeraldConnected else SkyBluePrimary
+                    containerColor = if (isSelected) EmeraldConnected else MaterialTheme.colorScheme.primary
                 ),
                 modifier = Modifier
                     .padding(start = 4.dp)
@@ -553,14 +507,12 @@ private fun CountryServerRowCard(
     node: VpnNode,
     isSelected: Boolean,
     isFavorite: Boolean,
-    isDark: Boolean,
     onSelectNode: () -> Unit,
     onToggleFavorite: () -> Unit
 ) {
-    IosGlassCard(
-        isDark = isDark,
-        cornerRadius = 20.dp,
-        accentGlowColor = if (isSelected) FireAccent else null,
+    M3SectionCard(
+        cornerRadius = 16.dp,
+        borderColor = if (isSelected) EmeraldConnected else MaterialTheme.colorScheme.outlineVariant,
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onSelectNode)
@@ -574,8 +526,8 @@ private fun CountryServerRowCard(
         ) {
             // 1. Country Flag Box
             Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
                 modifier = Modifier.size(42.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
@@ -588,13 +540,14 @@ private fun CountryServerRowCard(
 
             Spacer(modifier = Modifier.width(12.dp))
 
-            // 2. Country Name + Ultra-Fast Ping Subtitle
+            // 2. Country Name + Ping Subtitle
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = node.countryName,
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.Bold
                     ),
+                    color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -650,13 +603,13 @@ private fun CountryServerRowCard(
 
             Spacer(modifier = Modifier.width(6.dp))
 
-            // 4. Compact Pill Button with balanced padding & crisp single-line label
+            // 4. Compact Button with balanced padding & single-line label
             Button(
                 onClick = onSelectNode,
-                shape = RoundedCornerShape(11.dp),
+                shape = RoundedCornerShape(10.dp),
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isSelected) FireAccent else SkyBluePrimary
+                    containerColor = if (isSelected) EmeraldConnected else MaterialTheme.colorScheme.primary
                 ),
                 modifier = Modifier
                     .height(38.dp)
@@ -664,7 +617,7 @@ private fun CountryServerRowCard(
             ) {
                 if (isSelected) {
                     Icon(
-                        imageVector = Icons.Default.LocalFireDepartment,
+                        imageVector = Icons.Default.Lock,
                         contentDescription = null,
                         tint = Color.White,
                         modifier = Modifier.size(14.dp)
